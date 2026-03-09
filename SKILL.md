@@ -12,7 +12,7 @@ Create a consistent project context structure (team navigation + project folder)
 ## Loading Model (L1/L2/L3)
 
 - **L1**: Project `skill.md` — global overview, module navigation, environment notes.
-- **L2**: `modules/` — task-scoped module docs. Load the module overview first, then specific submodules.
+- **L2**: `modules/` + `agents/` — task-scoped module docs **and** agent role docs. Load the module overview first, then specific submodules; load the relevant agent README when working on that role’s tasks.
 - **L3**: `references/` — entrypoints, API indices, migrations, evidence-level docs.
 
 ## Workflow
@@ -124,6 +124,16 @@ Create a consistent project context structure (team navigation + project folder)
 - Interfaces & Dependencies
 - Key flows (if applicable)
 - Testing/QA hooks
+
+### L2 (agents/<agent>/README.md)
+
+- Role
+- Principles
+- Responsibilities
+- Deliverables
+- Working Style
+- Notes
+- Description of other files in the agent directory
 
 ### L3 (references/entrypoints.md)
 
