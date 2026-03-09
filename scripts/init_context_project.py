@@ -97,6 +97,12 @@ def infer_modules(code_dir: Path):
         candidates.add("backend")
     if {"test", "tests", "qa"} & lower_names:
         candidates.add("qa")
+    if {"mobile", "ios", "android"} & lower_names:
+        candidates.add("mobile")
+    if {"data", "analytics", "ml", "model"} & lower_names:
+        candidates.add("data")
+    if {"ops", "infra", "devops", "deploy", "helm", "k8s"} & lower_names:
+        candidates.add("ops")
 
     # Heuristics by key files
     files = {p.name for p in code_dir.iterdir() if p.is_file()}
@@ -106,6 +112,8 @@ def infer_modules(code_dir: Path):
         candidates.add("backend")
     if "go.mod" in files or "requirements.txt" in files or "pyproject.toml" in files:
         candidates.add("backend")
+    if "Dockerfile" in files or "docker-compose.yml" in files:
+        candidates.add("ops")
 
     if not candidates:
         candidates.update({"backend", "frontend", "qa", "reviewer"})
@@ -144,9 +152,23 @@ def main():
     write_if_missing(project_root / "modules" / "README.md", TEMPLATE_MODULES_README)
     write_if_missing(project_root / "references" / "entrypoints.md", "# Entrypoints\n\n- TODO: record key entrypoints and indices.\n")
 
-    for module in infer_modules(code_dir):
+    modules = infer_modules(code_dir)
+    for module in modules:
         write_if_missing(project_root / "modules" / module / "README.md", f"# {module}\n")
         write_if_missing(project_root / "modules" / module / f"{module}.md", f"# {module} Module\n\n## Scope\n- TODO: define boundaries and ownership.\n\n## Key Responsibilities\n- TODO: list core responsibilities.\n\n## Important Notes\n- TODO: add critical constraints, gotchas, or decisions.\n\n## Interfaces & Dependencies\n- TODO: list internal/external dependencies and key interfaces.\n")
+
+    # Create agent folders based on inferred modules + reviewer
+    agent_names = sorted(set(modules + ["reviewer"]))
+    for agent in agent_names:
+        agent_dir = project_root / "agents" / agent
+        write_if_missing(
+            agent_dir / "README.md",
+            f"# {agent.title()} — {agent.title()} Agent\n\n## Role\n- TODO: define role and scope.\n\n## Principles\n- TODO: list guiding principles.\n\n## Responsibilities\n- TODO: list responsibilities.\n\n## Deliverables\n- TODO: list expected outputs.\n\n## Working Style\n- TODO: describe working preferences.\n\n## Notes\n- TODO: add project-specific context.\n",
+        )
+        write_if_missing(agent_dir / "tools.md", "# Tools\n\n- TODO: tool usage notes.\n")
+        write_if_missing(agent_dir / "memory.md", "# Memory\n\n- TODO: long-term notes.\n")
+        write_if_missing(agent_dir / "decisions.jsonl", "")
+        write_if_missing(agent_dir / "fails.jsonl", "")
 
     print(f"Initialized context for {args.project} at {project_root}")
 
