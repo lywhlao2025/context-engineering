@@ -18,8 +18,8 @@ Use a two-stage model:
 ## Loading Model (L1/L2/L3)
 
 - **L1**: Project `skill.md` — global overview, routing rules, loading order, and environment notes.
-- **L2**: `agents/` — choose the task-matched agent first, then load that agent's README/tools/memory before doing deeper project analysis.
-- **L3**: `modules/` and `references/` — the active agent loads the relevant module overview first, then module detail files, then only the references needed for evidence-level checks.
+- **L2**: `agents/` and module overview files such as `modules/<module>/README.md` — choose the task-matched agent first, then let that agent load the relevant module overview before going deeper.
+- **L3**: module detail files such as `modules/<module>/<module>.md` and detailed `references/*` — load these only after the agent has selected the relevant module scope.
 
 ### Preferred Load Order
 
@@ -27,8 +27,8 @@ Use a two-stage model:
 2. Route the task to the relevant agent under `agents/<agent>/`.
 3. Load that agent's `README.md` first, then `tools.md` and `memory.md` if needed.
 4. Let the active agent choose which module to inspect.
-5. Load `modules/<module>/README.md` before `modules/<module>/<module>.md`.
-6. Load `references/*` only when the agent needs extraction rules, entrypoint evidence, or final checklists.
+5. Load `modules/<module>/README.md` as the module overview layer.
+6. Load `modules/<module>/<module>.md` and `references/*` only when the agent needs module detail or evidence-level checks.
 
 ## Workflow
 
