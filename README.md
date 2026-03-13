@@ -1,4 +1,4 @@
-# context-engineering
+# Context-Engineering
 
 Build and maintain team-style project context directories for AI agents.
 
