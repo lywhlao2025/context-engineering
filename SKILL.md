@@ -1,6 +1,6 @@
 ---
 name: context-engineering
-description: Build or initialize team-style project context directories for context engineering. Use when the user says “构建/初始化项目上下文”, “针对该项目构建上下文”, or asks to scaffold a project context under a specified target directory (default ~/clawDir/team).
+description: Build or initialize team-style project context directories for context engineering. Use when the user says “构建/初始化项目上下文”, “针对该项目构建上下文”, **or** in English phrases like “build/initialize project context”, “scaffold project context”, “set up project context docs”, “create project context”, “generate project context docs”, “initialize context engineering project”, “set up team context”, “build context workspace”, or asks to scaffold a project context under a specified target directory (default ~/clawDir/team).
 ---
 
 # Context Engineering
@@ -8,6 +8,12 @@ description: Build or initialize team-style project context directories for cont
 ## Overview
 
 Create a consistent project context structure (team navigation + project folder) and link it to a code directory. Default target root is `~/clawDir/team`, but allow the user to specify another root path.
+
+Use a two-stage model:
+
+- `scripts/init_context_project.py` creates missing scaffold files and folders only.
+- `scripts/sync_context_project.py` refreshes generated context content after the scaffold exists.
+- Generation is not complete until the generated context has been reviewed with a **Git-first** workflow and obvious issues have been fixed or explicitly called out.
 
 ## Loading Model (L1/L2/L3)
 
@@ -23,8 +29,9 @@ Create a consistent project context structure (team navigation + project folder)
    - `target_root` (optional). If not provided, use `~/clawDir/team`.
 
 2. **Analyze the code structure**
-   - Identify tech stack and main areas (frontend/backend/qa/etc.) from code directory structure and key files.
-   - Read top-level docs: `README*`, `docs/`, `tech.md`, `architecture.md`, `CHANGELOG*` if present.
+   - First build or missing sync state: identify tech stack and main areas (frontend/backend/qa/etc.) from code directory structure and key files.
+   - Existing Git-backed context: start from Git diff/tree first; do **not** broad-read the source tree before you know the changed scope.
+   - Read top-level docs such as `README*`, `docs/`, `tech.md`, `architecture.md`, `CHANGELOG*` when bootstrapping a project or when a broad review trigger fires.
 
 3. **Initialize the context structure**
    - Prefer running the bundled script:
@@ -37,14 +44,95 @@ Create a consistent project context structure (team navigation + project folder)
    - The script infers module buckets from the codebase and creates module folders dynamically.
    - The script is idempotent: it won’t overwrite existing files.
 
-4. **Populate content (critical)**
+4. **Sync generated context content**
+   - Prefer running the bundled script:
+     ```bash
+     python scripts/sync_context_project.py \
+       --project <project_name> \
+       --code-dir <code_dir> \
+       --target-root <target_root>
+     ```
+   - `Git` project: incremental sync against the last successful sync state when safe.
+   - Non-`Git` project: full sync only.
+   - If the sync state is missing, invalid, or the module map changed, the sync falls back to a full refresh.
+   - By default, incremental sync ignores `untracked` files and only considers tracked changes plus the working tree for tracked files. Use `--include-untracked` only when those files should affect context.
+   - Sync only updates managed `AUTO` blocks. Manual notes outside those blocks are preserved.
+   - If a managed `AUTO` block was edited manually after the last sync, the sync stops unless `--force-generated` is passed.
+   - Treat the sync output as the default review plan input: `changed_paths`, `changed_modules`, `sync mode`, and `review scope`.
+
+5. **Review and extend content (mandatory)**
    - Fill `skill.md` (L1) with **project summary, architecture, entrypoints, build/run, module navigation**.
    - Fill `modules/<module>/README.md` (overview) and `modules/<module>/<module>.md` (detail).
    - Fill `references/entrypoints.md` with code-level entrypoints and indexes.
+   - Follow this review order strictly:
+     1. Inspect Git diff/tree or the sync output first.
+     2. Spot-check only the modules hit by the diff.
+     3. Broaden to a wider source review only when one of these triggers fires:
+        - first context build / no previous sync state
+        - module map changed
+        - runtime entrypoint judgment is ambiguous
+        - the existing context does not match the diff scope
+        - non-Git repo, because no diff baseline exists
+   - If sync reports `Review scope: noop`, do not re-read source files.
+   - In targeted review mode, at minimum review only the diff-hit scope for:
+     - runtime entrypoints vs build/config files inside the changed scope
+     - module boundaries vs actual functional boundaries inside the changed scope
+     - QA/test/release/storage/i18n coverage touched by the diff
+     - inconsistencies between manual notes and generated `AUTO` blocks for the changed scope
+     - obvious stale status fields such as `project_status.md`
+   - In broad review mode, expand the same checks to the wider source tree.
+   - Fix clear issues immediately. If an issue cannot be fixed safely in the current turn, report it explicitly as a review finding.
 
-5. **Post-init checks**
+6. **Post-review checks**
    - Verify the created files exist and are filled under: `<target_root>/projects/<project_name>/`.
+   - Re-run sync if review-driven edits changed managed generation rules or `AUTO` content.
    - If the user wants custom content, update modules and references accordingly.
+   - Record major changes in `decisions.md` (project-level) or `decisions.jsonl` (agent-level).
+
+## Sync Model
+
+- Sync state lives at `<target_root>/projects/<project_name>/.context-sync/state.json`.
+- The state file records the last successful sync snapshot, module map, watched global paths, and hashes for generated `AUTO` blocks.
+- Incremental sync is attempted only for `Git` projects with a valid state file.
+- Incremental sync uses the current branch and current working tree. It must not auto-checkout another branch or auto-pull, because that would mutate the user's repo state.
+- Non-`Git` projects always use full sync because there is no reliable diff baseline.
+- Large or ambiguous `Git` changes fall back to full sync rather than risking stale context.
+- Incremental review is Git-first: start from diff/tree, then read only the affected modules unless a broad review trigger fires.
+
+### Review Scope Meanings
+
+- `git-diff-only`: first inspect Git diff/tree, then spot-check only the modules and paths hit by the diff.
+- `broad-source-review`: widen back to the source tree because diff-only review is not safe enough for this run.
+- `noop`: no code changes were detected, so do not re-read source files.
+
+## Ownership Rules
+
+- Manual content is user-owned. Put it outside managed `AUTO` blocks.
+- Generated content is sync-owned. `sync_context_project.py` rewrites only those `AUTO` blocks.
+- If a generated `AUTO` block is edited manually, that is treated as a conflict on the next sync.
+- Use `--force-generated` only when you intentionally want the sync to replace the current generated block.
+
+## Mandatory Review Standard
+
+- Every generated or synced project context must receive a review pass before the task is considered complete.
+- The default review path is **not** a broad source reread. Start from Git diff/tree and compare generated docs against the affected scope first.
+- Broader source review is reserved for these triggers:
+  - first build or missing sync state
+  - module map drift
+  - ambiguous entrypoints or runtime/build boundaries
+  - context vs diff mismatch
+  - non-Git repos
+- Prioritize finding misleading context over producing more text. Typical failure modes:
+  - config or package files misclassified as runtime entrypoints
+  - major functional areas missing from modules
+  - QA/release/storage/i18n concerns missing or under-modeled
+  - agent docs left as placeholders
+  - status files that no longer match the real project state
+- Review outcomes must be one of:
+  - `pass`: context is accurate enough to hand off
+  - `pass with findings`: mostly usable, but known issues are called out
+  - `fail`: generated context is materially misleading and needs fixes before handoff
+- If the user explicitly asks for a review, present findings first with concrete file references.
 
 ## Modules Directory Guidance
 
@@ -76,29 +164,9 @@ Create a consistent project context structure (team navigation + project folder)
 
 ## Content Extraction Rules (General)
 
-### Entrypoints & Runtime
+Keep SKILL.md lean. For detailed extraction guidance (entrypoints, flows, data, tests, i18n), load:
 
-- Find entry files (`main`, `index`, `app`, `server`) in the language/framework.
-- Capture build/run scripts from package/config files (e.g., `package.json`, `Makefile`, `pyproject.toml`, `pom.xml`).
-- Note extension or deployment entrypoints (e.g., `manifest.json`, `Dockerfile`, `helm/`).
-
-### Core Flows
-
-- Identify primary user flows or API flows and map to modules.
-- For each flow, note: input → processing → output, plus error handling.
-
-### Data & Storage
-
-- Note persistence mechanisms (DB, localStorage, files, caches), migration paths, and data schemas.
-
-### Testing & QA
-
-- Find test directories, frameworks, and critical test cases.
-- Summarize how to run tests and what scenarios are essential.
-
-### i18n / Localization
-
-- Detect locale files and string sources; note sync requirements between app strings and platform-specific locales.
+- `references/extraction-rules.md`
 
 ## Output Templates (Required)
 
@@ -109,12 +177,19 @@ Create a consistent project context structure (team navigation + project folder)
 - Entrypoints + build/run
 - Module navigation
 - Progressive loading model (L1/L2/L3)
+- **Spec-driven development**
+  - Spec-first rule (no implementation without a spec)
+  - Spec template (scope, interfaces, edge cases/errors, acceptance criteria, tests)
+  - Change control (spec updates recorded in decisions)
+  - Traceability (code/tests map back to spec items)
+- Keep generated content inside a managed `AUTO` block so manual notes can live around it.
 
 ### L2 (modules/<module>/README.md)
 
 - Responsibilities
 - Key areas/files
 - Typical tasks
+- Keep generated content inside a managed `AUTO` block so manual notes can live around it.
 
 ### L2 (modules/<module>/<module>.md)
 
@@ -124,6 +199,7 @@ Create a consistent project context structure (team navigation + project folder)
 - Interfaces & Dependencies
 - Key flows (if applicable)
 - Testing/QA hooks
+- Keep generated content inside a managed `AUTO` block so manual notes can live around it.
 
 ### L2 (agents/<agent>/README.md)
 
@@ -142,6 +218,7 @@ Create a consistent project context structure (team navigation + project folder)
 - Data/storage index
 - i18n index
 - Build/release/ops entrypoints
+- Keep generated content inside a managed `AUTO` block so manual notes can live around it.
 
 ## Quality Checklist (Before Finalizing)
 
@@ -150,6 +227,11 @@ Create a consistent project context structure (team navigation + project folder)
 - References contain concrete file paths
 - Loading paths cover UI/UX, core logic, QA, release scenarios
 - Agent folders exist with clear responsibilities
+- Mandatory review completed after generation/sync
+- No unresolved placeholder `TODO` content in delivered context unless explicitly marked as pending
+- Runtime entrypoints are separated from build/config/release files
+- Major functional modules in the codebase are represented in context, either as top-level modules or documented submodules
+- `project_status.md` and other summary files do not obviously contradict the current project state
 
 ## Files Created
 
@@ -165,7 +247,9 @@ Create a consistent project context structure (team navigation + project folder)
 - `<target_root>/projects/<project_name>/modules/<module>/README.md` (modules inferred from code)
 - `<target_root>/projects/<project_name>/modules/<module>/<module>.md`
 - `<target_root>/projects/<project_name>/references/entrypoints.md`
+- `<target_root>/projects/<project_name>/.context-sync/state.json`
 
 ## Resources
 
 - `scripts/init_context_project.py` — scaffold generator (preferred).
+- `scripts/sync_context_project.py` — sync generator for Git incremental / non-Git full refresh.
