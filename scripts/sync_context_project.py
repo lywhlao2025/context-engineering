@@ -32,6 +32,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 import context_layout as layout
 from init_context_project import infer_modules
+from source_resolver import ResolvedSource, SourceResolutionError, normalize_source_locator, resolve_code_source
 
 
 STATE_VERSION = 1
@@ -72,6 +73,7 @@ IGNORE_FILE_SUFFIXES = {
     ".7z",
     ".rar",
 }
+ALLOWED_DEFAULT_BRANCHES = ("main", "master")
 GLOBAL_CONFIG_FILES = {
     "package.json",
     "pnpm-lock.yaml",
@@ -235,9 +237,39 @@ def try_command(args: list[str], cwd: Path | None = None) -> str | None:
     return result.stdout.strip()
 
 
+def command_succeeds(args: list[str], cwd: Path | None = None) -> bool:
+    result = subprocess.run(
+        args,
+        cwd=str(cwd) if cwd else None,
+        text=True,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
 def is_git_repo(code_dir: Path) -> Path | None:
     output = try_command(["git", "-C", str(code_dir), "rev-parse", "--show-toplevel"])
     return Path(output).resolve() if output else None
+
+
+def ensure_clean_default_branch(repo_root: Path) -> tuple[str, str]:
+    current_head = run_command(["git", "-C", str(repo_root), "rev-parse", "HEAD"])
+    branch = run_command(["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"])
+    if branch not in ALLOWED_DEFAULT_BRANCHES:
+        allowed = " or ".join(f"`{name}`" for name in ALLOWED_DEFAULT_BRANCHES)
+        raise SyncError(
+            f"Default-branch sync requires the checked-out branch to be {allowed}. "
+            f"Current branch: `{branch}`."
+        )
+
+    status_output = run_command(["git", "-C", str(repo_root), "status", "--porcelain", "--untracked-files=all"])
+    if status_output:
+        raise SyncError(
+            "Default-branch sync requires a clean worktree on the checked-out default branch. "
+            "Commit, stash, or remove local changes before syncing."
+        )
+
+    return current_head, branch
 
 
 def run_init_scaffold(project: str, code_dir: Path, target_root: Path) -> None:
@@ -398,26 +430,22 @@ def git_changed_files(
     repo_root: Path,
     code_dir: Path,
     last_synced_head: str | None,
-    include_untracked: bool,
-) -> tuple[list[str], str, str]:
-    current_head = run_command(["git", "-C", str(repo_root), "rev-parse", "HEAD"])
-    branch = run_command(["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"])
+    has_previous_state: bool,
+) -> tuple[list[str], str, str, str | None]:
+    current_head, branch = ensure_clean_default_branch(repo_root)
     raw_paths: set[str] = set()
+    base_issue: str | None = None
 
-    if last_synced_head and try_command(["git", "-C", str(repo_root), "cat-file", "-e", f"{last_synced_head}^{{commit}}"]):
-        diff_output = run_command(["git", "-C", str(repo_root), "diff", "--name-only", f"{last_synced_head}..HEAD"])
-        raw_paths.update(filter(None, diff_output.splitlines()))
-
-    commands = [
-        ["git", "-C", str(repo_root), "diff", "--name-only"],
-        ["git", "-C", str(repo_root), "diff", "--name-only", "--cached"],
-    ]
-    if include_untracked:
-        commands.append(["git", "-C", str(repo_root), "ls-files", "--others", "--exclude-standard"])
-
-    for args in commands:
-        output = run_command(args)
-        raw_paths.update(filter(None, output.splitlines()))
+    if has_previous_state:
+        if not last_synced_head:
+            base_issue = "Previous sync state is missing `last_synced_head`."
+        elif not command_succeeds(["git", "-C", str(repo_root), "cat-file", "-e", f"{last_synced_head}^{{commit}}"]):
+            base_issue = "Last synced commit is no longer available in the local default-branch history."
+        elif not command_succeeds(["git", "-C", str(repo_root), "merge-base", "--is-ancestor", last_synced_head, "HEAD"]):
+            base_issue = "Last synced commit is not an ancestor of the current default-branch HEAD."
+        else:
+            diff_output = run_command(["git", "-C", str(repo_root), "diff", "--name-only", f"{last_synced_head}..HEAD"])
+            raw_paths.update(filter(None, diff_output.splitlines()))
 
     changed_paths = []
     for raw_path in sorted(raw_paths):
@@ -426,7 +454,7 @@ def git_changed_files(
             if should_ignore_relative_path(rel_path):
                 continue
             changed_paths.append(rel_path)
-    return changed_paths, current_head, branch
+    return changed_paths, current_head, branch, base_issue
 
 
 def path_matches_root(relative_path: str, root: str) -> bool:
@@ -1123,6 +1151,7 @@ def determine_sync_mode(
     changed_modules: list[str],
     update_global: bool,
     unmatched_changes: list[str],
+    sync_base_issue: str | None,
 ) -> SyncMode:
     if not git_repo_root:
         return SyncMode("full", [], True, "Non-Git project; full sync only.")
@@ -1132,6 +1161,8 @@ def determine_sync_mode(
         return SyncMode("full", [], True, "Sync state version changed.")
     if current_state.get("module_map") != module_map:
         return SyncMode("full", [], True, "Module map changed since the last sync.")
+    if sync_base_issue:
+        return SyncMode("full", [], True, sync_base_issue)
     if unmatched_changes:
         return SyncMode("full", [], True, "Changed files could not be mapped to a module safely.")
 
@@ -1156,6 +1187,7 @@ def determine_review_plan(
     changed_paths: list[str],
     changed_modules: list[str],
     unmatched_changes: list[str],
+    sync_base_issue: str | None,
 ) -> ReviewPlan:
     if mode.name == "noop":
         return ReviewPlan(
@@ -1193,6 +1225,14 @@ def determine_review_plan(
         return ReviewPlan(
             "broad-source-review",
             "Module map changed since the last sync.",
+            sorted(changed_modules),
+            changed_paths,
+        )
+
+    if sync_base_issue:
+        return ReviewPlan(
+            "broad-source-review",
+            sync_base_issue,
             sorted(changed_modules),
             changed_paths,
         )
@@ -1239,6 +1279,45 @@ def determine_review_plan(
     )
 
 
+def validate_source_identity(previous_state: dict, source: ResolvedSource, git_repo_root: Path | None) -> None:
+    if not previous_state:
+        return
+
+    previous_source_type = previous_state.get("source_type")
+    previous_git_url = previous_state.get("source_git_url")
+    previous_code_dir = previous_state.get("code_dir")
+    previous_repo_root = previous_state.get("repo_root")
+
+    if previous_source_type and previous_source_type != source.source_type:
+        raise SyncError(
+            "Existing project context is already bound to a different source type. "
+            "Use a new project name if you want to analyze a different repository."
+        )
+
+    if previous_git_url:
+        if not source.git_url or normalize_source_locator(previous_git_url) != normalize_source_locator(source.git_url):
+            raise SyncError(
+                "Existing project context is already bound to a different Git source. "
+                "Use a new project name if you want to analyze a different repository."
+            )
+        return
+
+    if previous_code_dir:
+        previous_path = Path(previous_code_dir).expanduser().resolve()
+        if previous_path != source.code_dir:
+            raise SyncError(
+                "Existing project context is already bound to a different local code directory. "
+                "Use a new project name if you want to analyze a different repository."
+            )
+
+    if previous_repo_root and git_repo_root:
+        if Path(previous_repo_root).expanduser().resolve() != git_repo_root:
+            raise SyncError(
+                "Existing project context is already bound to a different Git repository root. "
+                "Use a new project name if you want to analyze a different repository."
+            )
+
+
 def prepare_state(
     previous_state: dict,
     project_root: Path,
@@ -1246,6 +1325,7 @@ def prepare_state(
     git_repo_root: Path | None,
     current_head: str | None,
     branch: str | None,
+    source: ResolvedSource,
     module_map: dict[str, list[str]],
     global_paths: list[str],
     generated_hashes: dict[str, str],
@@ -1259,6 +1339,9 @@ def prepare_state(
         "project_root": str(project_root),
         "code_dir": str(code_dir),
         "repo_root": str(git_repo_root) if git_repo_root else None,
+        "source_type": source.source_type,
+        "source_git_url": source.git_url,
+        "managed_source": source.managed,
         "last_synced_head": current_head if git_repo_root else None,
         "last_synced_branch": branch if git_repo_root else None,
         "last_sync_at": now_iso(),
@@ -1275,7 +1358,9 @@ def prepare_state(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Synchronize a team-style project context directory.")
     parser.add_argument("--project", required=True, help="Project name (folder name).")
-    parser.add_argument("--code-dir", required=True, help="Absolute path to the code directory.")
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--code-dir", help="Absolute path to the local code directory.")
+    source_group.add_argument("--git-url", help="Git repository URL or local Git path to clone for analysis.")
     parser.add_argument(
         "--target-root",
         default=str(layout.DEFAULT_TARGET_ROOT),
@@ -1291,19 +1376,24 @@ def main() -> None:
         action="store_true",
         help="Show what would be updated without writing files.",
     )
-    parser.add_argument(
-        "--include-untracked",
-        action="store_true",
-        help="Include untracked files in Git incremental change detection.",
-    )
     args = parser.parse_args()
 
-    code_dir = Path(args.code_dir).expanduser().resolve()
     target_root = Path(args.target_root).expanduser().resolve()
     project_root = layout.project_root(target_root, args.project)
+    previous_state = load_state(project_root)
 
-    if not code_dir.exists():
-        raise SyncError(f"Code directory does not exist: {code_dir}")
+    try:
+        source = resolve_code_source(
+            args.project,
+            target_root,
+            code_dir=args.code_dir,
+            git_url=args.git_url,
+            allow_mutation=not args.dry_run,
+        )
+    except SourceResolutionError as exc:
+        raise SyncError(str(exc)) from exc
+
+    code_dir = source.code_dir
 
     if not args.dry_run:
         run_init_scaffold(args.project, code_dir, target_root)
@@ -1311,17 +1401,18 @@ def main() -> None:
     modules = infer_modules(code_dir)
     module_map, global_paths, _ = discover_module_map(code_dir, modules)
     git_repo_root = is_git_repo(code_dir)
-    previous_state = load_state(project_root)
+    validate_source_identity(previous_state, source, git_repo_root)
 
     changed_paths: list[str] = []
     branch: str | None = None
     current_head: str | None = None
+    sync_base_issue: str | None = None
     if git_repo_root:
-        changed_paths, current_head, branch = git_changed_files(
+        changed_paths, current_head, branch, sync_base_issue = git_changed_files(
             git_repo_root,
             code_dir,
             previous_state.get("last_synced_head"),
-            args.include_untracked,
+            bool(previous_state),
         )
 
     changed_modules: list[str] = []
@@ -1338,6 +1429,7 @@ def main() -> None:
         changed_modules,
         update_global,
         unmatched_changes,
+        sync_base_issue,
     )
 
     if git_repo_root and mode.name == "incremental" and not changed_paths:
@@ -1353,6 +1445,7 @@ def main() -> None:
         changed_paths,
         changed_modules,
         unmatched_changes,
+        sync_base_issue,
     )
 
     manifests = detect_manifests(code_dir)
@@ -1401,6 +1494,7 @@ def main() -> None:
         git_repo_root,
         current_head,
         branch,
+        source,
         module_map,
         global_paths,
         generated_hashes,

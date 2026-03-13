@@ -12,9 +12,10 @@ The goal is to keep project context lightweight, navigable, and safe to update o
 ## What It Does
 
 - Scaffolds a project context workspace under `~/clawDir/team` by default.
+- Accepts either a local checkout (`--code-dir`) or a Git source (`--git-url`).
 - Infers module buckets such as `frontend`, `backend`, `qa`, `mobile`, `data`, `ops`, and `reviewer`.
 - Creates project-level docs, per-module docs, and per-agent folders.
-- Uses Git-first incremental sync when a valid prior sync state exists.
+- Uses Git-first incremental sync only from a clean checked-out default branch (`main` or `master`) when a valid prior sync state exists.
 - Falls back to full sync when the repo is non-Git, the module map changes, or the diff is too broad.
 - Rewrites only managed `AUTO` blocks so manual notes outside those blocks survive syncs.
 - Refuses to overwrite manually edited generated blocks unless `--force-generated` is passed.
@@ -30,12 +31,14 @@ The goal is to keep project context lightweight, navigable, and safe to update o
 └── scripts/
     ├── context_layout.py
     ├── init_context_project.py
+    ├── source_resolver.py
     └── sync_context_project.py
 ```
 
 - `SKILL.md`: the agent-facing workflow and rules for using this skill.
 - `scripts/context_layout.py`: shared layout constants and path helpers.
 - `scripts/init_context_project.py`: idempotent scaffold generator.
+- `scripts/source_resolver.py`: resolves either a local code directory or a managed Git clone under the target root.
 - `scripts/sync_context_project.py`: incremental/full sync engine with review planning.
 - `references/extraction-rules.md`: detailed extraction rules for entrypoints, flows, data, tests, and i18n.
 
@@ -57,12 +60,28 @@ python3 scripts/init_context_project.py \
   --code-dir /absolute/path/to/my-project
 ```
 
+Initialize from Git instead of a local checkout:
+
+```bash
+python3 scripts/init_context_project.py \
+  --project my-project \
+  --git-url https://github.com/example/my-project.git
+```
+
 Sync generated context after the scaffold exists:
 
 ```bash
 python3 scripts/sync_context_project.py \
   --project my-project \
   --code-dir /absolute/path/to/my-project
+```
+
+Sync against a managed Git clone:
+
+```bash
+python3 scripts/sync_context_project.py \
+  --project my-project \
+  --git-url https://github.com/example/my-project.git
 ```
 
 Use a custom target root instead of `~/clawDir/team`:
@@ -81,13 +100,14 @@ python3 scripts/init_context_project.py \
 ```bash
 python3 scripts/init_context_project.py \
   --project <project-name> \
-  --code-dir <absolute-code-dir> \
+  (--code-dir <absolute-code-dir> | --git-url <git-url>) \
   [--target-root <context-root>]
 ```
 
 Behavior:
 
 - Creates missing directories and files only.
+- When `--git-url` is used, clones the repository into `<target-root>/sources/<project-name>` and analyzes that managed checkout.
 - Updates `projects/projects.md` with the new project entry.
 - Infers initial modules from the code tree.
 - Creates placeholder module docs and agent folders.
@@ -97,18 +117,18 @@ Behavior:
 ```bash
 python3 scripts/sync_context_project.py \
   --project <project-name> \
-  --code-dir <absolute-code-dir> \
+  (--code-dir <absolute-code-dir> | --git-url <git-url>) \
   [--target-root <context-root>] \
   [--dry-run] \
-  [--include-untracked] \
   [--force-generated]
 ```
 
 Flags:
 
 - `--dry-run`: print planned updates without writing files.
-- `--include-untracked`: include untracked files in Git change detection.
 - `--force-generated`: overwrite conflicting generated `AUTO` blocks.
+
+`--dry-run` with `--git-url` requires an existing managed checkout. It will not clone or fetch sources.
 
 ## How Sync Works
 
@@ -117,6 +137,23 @@ Flags:
 - `incremental`: Git repo with valid sync state and safely scoped changes.
 - `full`: initial sync, non-Git repo, module drift, unmatched paths, or broad changes.
 - `noop`: no code changes detected since the last successful sync.
+
+For Git repos, sync only runs when:
+
+- the checked-out branch is `main` or `master`
+- the worktree is clean, including untracked files
+
+The local checked-out default branch is treated as the source of truth. Incremental diffs are computed from the last synced default-branch commit to the current `HEAD` on that same branch.
+
+When `--git-url` is used, the tool maintains a managed checkout at:
+
+```text
+<target-root>/sources/<project>
+```
+
+That managed checkout is fetched and fast-forwarded before analysis. If it becomes dirty or stops matching the configured `origin`, sync stops instead of mutating it blindly.
+
+Once a project context has been created, sync keeps it bound to the same source. Reusing the same `--project` name with a different local checkout or Git URL is rejected.
 
 Sync state is stored in:
 
@@ -160,6 +197,8 @@ The scaffold produces a structure like this:
 ```text
 <target-root>/
 ├── readme.md
+├── sources/
+│   └── <project>/   # optional managed Git checkout when --git-url is used
 └── projects/
     ├── projects.md
     └── <project>/
@@ -190,7 +229,9 @@ The scaffold produces a structure like this:
 ## Notes And Limits
 
 - Agent folders are scaffolded during init, but the sync script does not currently regenerate agent docs.
-- The tool does not auto-checkout branches or pull remote changes.
+- Git sync refuses to run on non-default branches or dirty worktrees.
+- Managed Git sources must expose `main` or `master` for analysis.
+- The tool does not auto-checkout or pull user-owned local checkouts. Managed Git sources under `<target-root>/sources/` may be fetched and fast-forwarded.
 - Incremental review depends on a trustworthy Git baseline.
 - If generated `AUTO` blocks are edited manually, sync will stop unless forced.
 

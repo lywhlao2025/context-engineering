@@ -25,10 +25,11 @@ Use a two-stage model:
 
 1. **Collect inputs**
    - `project_name` (folder name)
-   - `code_dir` (absolute path to the code)
+   - Source input: either `code_dir` (absolute path to the code) or `git_url` (Git URL or local Git repo path to clone)
    - `target_root` (optional). If not provided, use `~/clawDir/team`.
 
 2. **Analyze the code structure**
+   - If `git_url` is provided, prepare a managed checkout under `<target_root>/sources/<project_name>` before analysis.
    - First build or missing sync state: identify tech stack and main areas (frontend/backend/qa/etc.) from code directory structure and key files.
    - Existing Git-backed context: start from Git diff/tree first; do **not** broad-read the source tree before you know the changed scope.
    - Read top-level docs such as `README*`, `docs/`, `tech.md`, `architecture.md`, `CHANGELOG*` when bootstrapping a project or when a broad review trigger fires.
@@ -38,10 +39,11 @@ Use a two-stage model:
      ```bash
      python scripts/init_context_project.py \
        --project <project_name> \
-       --code-dir <code_dir> \
+       --code-dir <code_dir> | --git-url <git_url> \
        --target-root <target_root>
      ```
    - The script infers module buckets from the codebase and creates module folders dynamically.
+   - If `git_url` is used, the script clones the repo into `<target_root>/sources/<project_name>` and analyzes that managed checkout.
    - The script is idempotent: it won’t overwrite existing files.
 
 4. **Sync generated context content**
@@ -49,13 +51,18 @@ Use a two-stage model:
      ```bash
      python scripts/sync_context_project.py \
        --project <project_name> \
-       --code-dir <code_dir> \
+       --code-dir <code_dir> | --git-url <git_url> \
        --target-root <target_root>
      ```
-   - `Git` project: incremental sync against the last successful sync state when safe.
+   - If `git_url` is used, the script refreshes the managed checkout under `<target_root>/sources/<project_name>` before diffing.
+   - `--dry-run` with `git_url` requires an existing managed checkout; it must not clone or fetch sources.
+   - `Git` project: sync only from a clean checked-out default branch (`main` or `master`).
+   - Incremental sync compares the current default-branch `HEAD` against the last successful sync head recorded for that same local default branch.
    - Non-`Git` project: full sync only.
-   - If the sync state is missing, invalid, or the module map changed, the sync falls back to a full refresh.
-   - By default, incremental sync ignores `untracked` files and only considers tracked changes plus the working tree for tracked files. Use `--include-untracked` only when those files should affect context.
+   - If the checked-out branch is not `main` or `master`, stop and ask the user to switch to the default branch before syncing.
+   - If the worktree is not clean, stop and ask the user to commit, stash, or remove local changes before syncing.
+   - If the sync state is missing, invalid, the previous sync head is not usable on the current default branch, or the module map changed, the sync falls back to a full refresh.
+   - Once a project context exists, keep it bound to the same source. If the user wants to analyze a different repo, use a new `project_name`.
    - Sync only updates managed `AUTO` blocks. Manual notes outside those blocks are preserved.
    - If a managed `AUTO` block was edited manually after the last sync, the sync stops unless `--force-generated` is passed.
    - Treat the sync output as the default review plan input: `changed_paths`, `changed_modules`, `sync mode`, and `review scope`.
@@ -92,12 +99,13 @@ Use a two-stage model:
 ## Sync Model
 
 - Sync state lives at `<target_root>/projects/<project_name>/.context-sync/state.json`.
-- The state file records the last successful sync snapshot, module map, watched global paths, and hashes for generated `AUTO` blocks.
-- Incremental sync is attempted only for `Git` projects with a valid state file.
-- Incremental sync uses the current branch and current working tree. It must not auto-checkout another branch or auto-pull, because that would mutate the user's repo state.
+- The state file records the last successful sync snapshot, module map, watched global paths, hashes for generated `AUTO` blocks, the last synced default-branch head, and source metadata.
+- Incremental sync is attempted only for `Git` projects with a valid state file and a clean checked-out default branch (`main` or `master`).
+- Incremental sync uses the local checked-out default branch as the source of truth. It must not auto-checkout another branch or auto-pull, because that would mutate the user's repo state.
+- For managed `git_url` sources under `<target_root>/sources/<project_name>`, the skill may fetch and fast-forward the managed checkout before analysis.
 - Non-`Git` projects always use full sync because there is no reliable diff baseline.
 - Large or ambiguous `Git` changes fall back to full sync rather than risking stale context.
-- Incremental review is Git-first: start from diff/tree, then read only the affected modules unless a broad review trigger fires.
+- Incremental review is Git-first: start from the default-branch diff/tree, then read only the affected modules unless a broad review trigger fires.
 
 ### Review Scope Meanings
 
@@ -236,6 +244,7 @@ Keep SKILL.md lean. For detailed extraction guidance (entrypoints, flows, data, 
 ## Files Created
 
 - `<target_root>/readme.md` (if missing)
+- `<target_root>/sources/<project_name>/` (when `git_url` is used)
 - `<target_root>/projects/projects.md` (index with new project entry)
 - `<target_root>/projects/<project_name>/readme.md`
 - `<target_root>/projects/<project_name>/goals.md`

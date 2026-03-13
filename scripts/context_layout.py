@@ -33,6 +33,8 @@ MODULE_OVERVIEW_FILENAME = "README.md"
 REFERENCES_DIRNAME = "references"
 ENTRYPOINTS_FILENAME = "entrypoints.md"
 
+SOURCES_DIRNAME = "sources"
+
 SYNC_DIRNAME = ".context-sync"
 STATE_FILENAME = "state.json"
 
@@ -135,6 +137,14 @@ def references_dir(project_root: Path) -> Path:
 
 def entrypoints_path(project_root: Path) -> Path:
     return references_dir(project_root) / ENTRYPOINTS_FILENAME
+
+
+def sources_dir(target_root: Path) -> Path:
+    return target_root / SOURCES_DIRNAME
+
+
+def managed_source_path(target_root: Path, project_name: str) -> Path:
+    return sources_dir(target_root) / project_name
 
 
 def sync_state_dir(project_root: Path) -> Path:

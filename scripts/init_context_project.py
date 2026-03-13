@@ -5,6 +5,8 @@ Usage:
   python scripts/init_context_project.py \
     --project my-project \
     --code-dir /absolute/path/to/my-project \
+    # or
+    --git-url https://github.com/example/my-project.git \
     --target-root /absolute/path/to/team
 """
 
@@ -13,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 import context_layout as layout
+from source_resolver import SourceResolutionError, resolve_code_source
 
 
 def ensure_parent(path: Path):
@@ -46,6 +49,8 @@ def append_project_index(projects_index: Path, project_name: str):
 TEMPLATE_README = """# {project}
 
 - Code directory: {code_dir}
+- Source type: {source_type}
+{source_note}- Managed source checkout: {managed_source}
 - Context root: {project_root}
 
 ## Scope
@@ -128,7 +133,9 @@ def infer_modules(code_dir: Path):
 def main():
     parser = argparse.ArgumentParser(description="Initialize a team-style project context directory.")
     parser.add_argument("--project", required=True, help="Project name (folder name).")
-    parser.add_argument("--code-dir", required=True, help="Absolute path to the code directory.")
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--code-dir", help="Absolute path to the local code directory.")
+    source_group.add_argument("--git-url", help="Git repository URL or local Git path to clone for analysis.")
     parser.add_argument(
         "--target-root",
         default=str(layout.DEFAULT_TARGET_ROOT),
@@ -137,7 +144,17 @@ def main():
     args = parser.parse_args()
 
     target_root = Path(args.target_root).expanduser().resolve()
-    code_dir = Path(args.code_dir).expanduser().resolve()
+    try:
+        source = resolve_code_source(
+            args.project,
+            target_root,
+            code_dir=args.code_dir,
+            git_url=args.git_url,
+        )
+    except SourceResolutionError as exc:
+        raise SystemExit(str(exc))
+
+    code_dir = source.code_dir
     project_root = layout.project_root(target_root, args.project)
     date = datetime.now().strftime("%Y-%m-%d")
 
@@ -145,7 +162,19 @@ def main():
     created.append(write_if_missing(layout.team_readme_path(target_root), "# Team Directory Guide\n\n- Keep navigation here.\n"))
     append_project_index(layout.projects_index_path(target_root), args.project)
 
-    write_if_missing(layout.project_readme_path(project_root), TEMPLATE_README.format(project=args.project, code_dir=code_dir, project_root=project_root))
+    source_note = f"- Source git: {source.git_url}\n" if source.git_url else ""
+    managed_source = "yes" if source.managed else "no"
+    write_if_missing(
+        layout.project_readme_path(project_root),
+        TEMPLATE_README.format(
+            project=args.project,
+            code_dir=code_dir,
+            project_root=project_root,
+            source_type=source.source_type,
+            source_note=source_note,
+            managed_source=managed_source,
+        ),
+    )
     write_if_missing(layout.goals_path(project_root), TEMPLATE_GOALS)
     write_if_missing(layout.skill_path(project_root), TEMPLATE_SKILL)
     write_if_missing(layout.project_status_path(project_root), TEMPLATE_STATUS.format(date=date))
