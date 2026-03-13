@@ -30,6 +30,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None
 
+import context_layout as layout
 from init_context_project import infer_modules
 
 
@@ -256,11 +257,11 @@ def run_init_scaffold(project: str, code_dir: Path, target_root: Path) -> None:
 
 
 def state_dir(project_root: Path) -> Path:
-    return project_root / ".context-sync"
+    return layout.sync_state_dir(project_root)
 
 
 def state_path(project_root: Path) -> Path:
-    return state_dir(project_root) / "state.json"
+    return layout.sync_state_path(project_root)
 
 
 def load_state(project_root: Path) -> dict:
@@ -515,19 +516,19 @@ def expected_generated_targets(project_root: Path, module_targets: list[str], in
     if include_global:
         targets.extend(
             [
-                (project_root / "skill.md", "l1"),
-                (project_root / "references" / "entrypoints.md", "entrypoints"),
-                (project_root / "modules" / "README.md", "module-index"),
+                (layout.skill_path(project_root), "l1"),
+                (layout.entrypoints_path(project_root), "entrypoints"),
+                (layout.modules_index_path(project_root), "module-index"),
             ]
         )
     for module in module_targets:
         targets.extend(
             [
-                (project_root / "modules" / module / "README.md", "module-overview"),
-                (project_root / "modules" / module / f"{module}.md", "module-detail"),
+                (layout.module_overview_path(project_root, module), "module-overview"),
+                (layout.module_detail_path(project_root, module), "module-detail"),
             ]
         )
-    targets.append((project_root / "project_status.md", "sync-status"))
+    targets.append((layout.project_status_path(project_root), "sync-status"))
     return targets
 
 
@@ -876,20 +877,23 @@ def generate_skill_block(
         if module == "reviewer":
             lines.append("- `reviewer`: cross-cutting risk review and quality gates.")
             continue
-        lines.append(f"- `{module}`: load `modules/{module}/README.md` first, then `modules/{module}/{module}.md`.")
+        lines.append(
+            f"- `{module}`: load `{layout.relative_module_overview(module)}` first, "
+            f"then `{layout.relative_module_detail(module)}`."
+        )
 
     lines.extend(
         [
             "",
             "## Progressive Loading Model",
-            "- L1: `skill.md` for global overview, architecture, and runtime notes.",
-            "- L2: `modules/` and `agents/` for task-scoped detail and role guidance.",
-            "- L3: `references/` for entrypoints, storage, i18n, and evidence-level docs.",
+            f"- L1: `{layout.SKILL_FILENAME}` for global overview, architecture, and runtime notes.",
+            f"- L2: `{layout.MODULES_DIRNAME}/` and `{layout.AGENTS_DIRNAME}/` for task-scoped detail and role guidance.",
+            f"- L3: `{layout.REFERENCES_DIRNAME}/` for entrypoints, storage, i18n, and evidence-level docs.",
             "",
             "## Spec-Driven Development",
             "- Keep spec-first changes outside this AUTO block if the project needs custom policy.",
             "- Minimum spec fields: scope, interfaces, edge cases, acceptance criteria, and tests.",
-            "- Record major spec changes in `decisions.md` or the relevant agent `decisions.jsonl`.",
+            f"- Record major spec changes in `{layout.DECISIONS_FILENAME}` or the relevant agent `{layout.AGENT_DECISIONS_FILENAME}`.",
         ]
     )
     return "\n".join(lines)
@@ -1051,21 +1055,21 @@ def build_updates(
     if mode.update_global or mode.name == "full":
         updates.append(
             (
-                project_root / "skill.md",
+                layout.skill_path(project_root),
                 "l1",
                 generate_skill_block(project, code_dir, modules, module_map, global_paths, mode, manifests, repo_root, branch, head),
             )
         )
         updates.append(
             (
-                project_root / "references" / "entrypoints.md",
+                layout.entrypoints_path(project_root),
                 "entrypoints",
                 generate_entrypoints_block(code_dir),
             )
         )
         updates.append(
             (
-                project_root / "modules" / "README.md",
+                layout.modules_index_path(project_root),
                 "module-index",
                 generate_modules_index_block(modules, module_map),
             )
@@ -1077,14 +1081,14 @@ def build_updates(
         module_paths = module_map.get(module, [])
         updates.append(
             (
-                project_root / "modules" / module / "README.md",
+                layout.module_overview_path(project_root, module),
                 "module-overview",
                 generate_module_overview_block(module, code_dir, module_paths),
             )
         )
         updates.append(
             (
-                project_root / "modules" / module / f"{module}.md",
+                layout.module_detail_path(project_root, module),
                 "module-detail",
                 generate_module_detail_block(module, code_dir, module_paths, module_map),
             )
@@ -1092,7 +1096,7 @@ def build_updates(
 
     updates.append(
         (
-            project_root / "project_status.md",
+            layout.project_status_path(project_root),
             "sync-status",
             generate_status_block(mode, review_plan, repo_root, branch, head, changed_paths),
         )
@@ -1274,8 +1278,8 @@ def main() -> None:
     parser.add_argument("--code-dir", required=True, help="Absolute path to the code directory.")
     parser.add_argument(
         "--target-root",
-        default=str(Path.home() / "clawDir" / "team"),
-        help="Target root for team context (default: ~/clawDir/team).",
+        default=str(layout.DEFAULT_TARGET_ROOT),
+        help=f"Target root for team context (default: {layout.DEFAULT_TARGET_ROOT_DISPLAY}).",
     )
     parser.add_argument(
         "--force-generated",
@@ -1296,7 +1300,7 @@ def main() -> None:
 
     code_dir = Path(args.code_dir).expanduser().resolve()
     target_root = Path(args.target_root).expanduser().resolve()
-    project_root = target_root / "projects" / args.project
+    project_root = layout.project_root(target_root, args.project)
 
     if not code_dir.exists():
         raise SyncError(f"Code directory does not exist: {code_dir}")

@@ -3,14 +3,16 @@
 
 Usage:
   python scripts/init_context_project.py \
-    --project chrome_extension_timestamp \
-    --code-dir /Users/laojiaqi/personal_projects/chrome_extension_timestamp \
-    --target-root /Users/laojiaqi/context_engineering/team
+    --project my-project \
+    --code-dir /absolute/path/to/my-project \
+    --target-root /absolute/path/to/team
 """
 
 import argparse
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
+import context_layout as layout
 
 
 def ensure_parent(path: Path):
@@ -33,7 +35,7 @@ def append_project_index(projects_index: Path, project_name: str):
             encoding="utf-8",
         )
     text = projects_index.read_text(encoding="utf-8")
-    entry = f"- {project_name} → projects/{project_name}/readme.md"
+    entry = layout.project_index_entry(project_name)
     if entry in text:
         return False
     new_text = text.rstrip() + "\n" + entry + "\n"
@@ -81,7 +83,7 @@ TEMPLATE_MODULES_README = """# Modules
 
 - Place analysis outputs here.
 - Suggested structure depends on tech stack.
-- Common buckets: modules/backend/, modules/frontend/, modules/qa/, modules/reviewer/
+- Common buckets: {modules_dir}/backend/, {modules_dir}/frontend/, {modules_dir}/qa/, {modules_dir}/reviewer/
 - Each module folder can contain multiple detailed documents.
 """
 
@@ -129,46 +131,45 @@ def main():
     parser.add_argument("--code-dir", required=True, help="Absolute path to the code directory.")
     parser.add_argument(
         "--target-root",
-        default=str(Path.home() / "clawDir" / "team"),
-        help="Target root for team context (default: ~/clawDir/team).",
+        default=str(layout.DEFAULT_TARGET_ROOT),
+        help=f"Target root for team context (default: {layout.DEFAULT_TARGET_ROOT_DISPLAY}).",
     )
     args = parser.parse_args()
 
     target_root = Path(args.target_root).expanduser().resolve()
     code_dir = Path(args.code_dir).expanduser().resolve()
-    project_root = target_root / "projects" / args.project
+    project_root = layout.project_root(target_root, args.project)
     date = datetime.now().strftime("%Y-%m-%d")
 
     created = []
-    created.append(write_if_missing(target_root / "readme.md", "# Team Directory Guide\n\n- Keep navigation here.\n"))
-    append_project_index(target_root / "projects" / "projects.md", args.project)
+    created.append(write_if_missing(layout.team_readme_path(target_root), "# Team Directory Guide\n\n- Keep navigation here.\n"))
+    append_project_index(layout.projects_index_path(target_root), args.project)
 
-    write_if_missing(project_root / "readme.md", TEMPLATE_README.format(project=args.project, code_dir=code_dir, project_root=project_root))
-    write_if_missing(project_root / "goals.md", TEMPLATE_GOALS)
-    write_if_missing(project_root / "skill.md", TEMPLATE_SKILL)
-    write_if_missing(project_root / "project_status.md", TEMPLATE_STATUS.format(date=date))
-    write_if_missing(project_root / "decisions.md", TEMPLATE_DECISIONS.format(date=date))
-    write_if_missing(project_root / "agents" / "agents.md", TEMPLATE_AGENTS)
-    write_if_missing(project_root / "modules" / "README.md", TEMPLATE_MODULES_README)
-    write_if_missing(project_root / "references" / "entrypoints.md", "# Entrypoints\n\n- TODO: record key entrypoints and indices.\n")
+    write_if_missing(layout.project_readme_path(project_root), TEMPLATE_README.format(project=args.project, code_dir=code_dir, project_root=project_root))
+    write_if_missing(layout.goals_path(project_root), TEMPLATE_GOALS)
+    write_if_missing(layout.skill_path(project_root), TEMPLATE_SKILL)
+    write_if_missing(layout.project_status_path(project_root), TEMPLATE_STATUS.format(date=date))
+    write_if_missing(layout.decisions_path(project_root), TEMPLATE_DECISIONS.format(date=date))
+    write_if_missing(layout.agents_index_path(project_root), TEMPLATE_AGENTS)
+    write_if_missing(layout.modules_index_path(project_root), TEMPLATE_MODULES_README.format(modules_dir=layout.MODULES_DIRNAME))
+    write_if_missing(layout.entrypoints_path(project_root), "# Entrypoints\n\n- TODO: record key entrypoints and indices.\n")
 
     modules = infer_modules(code_dir)
     for module in modules:
-        write_if_missing(project_root / "modules" / module / "README.md", f"# {module}\n")
-        write_if_missing(project_root / "modules" / module / f"{module}.md", f"# {module} Module\n\n## Scope\n- TODO: define boundaries and ownership.\n\n## Key Responsibilities\n- TODO: list core responsibilities.\n\n## Important Notes\n- TODO: add critical constraints, gotchas, or decisions.\n\n## Interfaces & Dependencies\n- TODO: list internal/external dependencies and key interfaces.\n")
+        write_if_missing(layout.module_overview_path(project_root, module), f"# {module}\n")
+        write_if_missing(layout.module_detail_path(project_root, module), f"# {module} Module\n\n## Scope\n- TODO: define boundaries and ownership.\n\n## Key Responsibilities\n- TODO: list core responsibilities.\n\n## Important Notes\n- TODO: add critical constraints, gotchas, or decisions.\n\n## Interfaces & Dependencies\n- TODO: list internal/external dependencies and key interfaces.\n")
 
     # Create agent folders based on inferred modules + reviewer
     agent_names = sorted(set(modules + ["reviewer"]))
     for agent in agent_names:
-        agent_dir = project_root / "agents" / agent
         write_if_missing(
-            agent_dir / "README.md",
+            layout.agent_readme_path(project_root, agent),
             f"# {agent.title()} — {agent.title()} Agent\n\n## Role\n- TODO: define role and scope.\n\n## Principles\n- TODO: list guiding principles.\n\n## Responsibilities\n- TODO: list responsibilities.\n\n## Deliverables\n- TODO: list expected outputs.\n\n## Working Style\n- TODO: describe working preferences.\n\n## Notes\n- TODO: add project-specific context.\n",
         )
-        write_if_missing(agent_dir / "tools.md", "# Tools\n\n- TODO: tool usage notes.\n")
-        write_if_missing(agent_dir / "memory.md", "# Memory\n\n- TODO: long-term notes.\n")
-        write_if_missing(agent_dir / "decisions.jsonl", "")
-        write_if_missing(agent_dir / "fails.jsonl", "")
+        write_if_missing(layout.agent_tools_path(project_root, agent), "# Tools\n\n- TODO: tool usage notes.\n")
+        write_if_missing(layout.agent_memory_path(project_root, agent), "# Memory\n\n- TODO: long-term notes.\n")
+        write_if_missing(layout.agent_decisions_path(project_root, agent), "")
+        write_if_missing(layout.agent_fails_path(project_root, agent), "")
 
     print(f"Initialized context for {args.project} at {project_root}")
 
