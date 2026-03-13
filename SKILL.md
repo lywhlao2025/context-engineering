@@ -17,9 +17,18 @@ Use a two-stage model:
 
 ## Loading Model (L1/L2/L3)
 
-- **L1**: Project `skill.md` — global overview, module navigation, environment notes.
-- **L2**: `modules/` + `agents/` — task-scoped module docs **and** agent role docs. Load the module overview first, then specific submodules; load the relevant agent README when working on that role’s tasks.
-- **L3**: `references/` — entrypoints, API indices, migrations, evidence-level docs.
+- **L1**: Project `skill.md` — global overview, routing rules, loading order, and environment notes.
+- **L2**: `agents/` — choose the task-matched agent first, then load that agent's README/tools/memory before doing deeper project analysis.
+- **L3**: `modules/` and `references/` — the active agent loads the relevant module overview first, then module detail files, then only the references needed for evidence-level checks.
+
+### Preferred Load Order
+
+1. Load project `SKILL.md`.
+2. Route the task to the relevant agent under `agents/<agent>/`.
+3. Load that agent's `README.md` first, then `tools.md` and `memory.md` if needed.
+4. Let the active agent choose which module to inspect.
+5. Load `modules/<module>/README.md` before `modules/<module>/<module>.md`.
+6. Load `references/*` only when the agent needs extraction rules, entrypoint evidence, or final checklists.
 
 ## Workflow
 
@@ -33,6 +42,7 @@ Use a two-stage model:
    - First build or missing sync state: identify tech stack and main areas (frontend/backend/qa/etc.) from code directory structure and key files.
    - Existing Git-backed context: start from Git diff/tree first; do **not** broad-read the source tree before you know the changed scope.
    - Read top-level docs such as `README*`, `docs/`, `tech.md`, `architecture.md`, `CHANGELOG*` when bootstrapping a project or when a broad review trigger fires.
+   - Infer the available project agents and modules, then route the task to the best-fit agent before loading module docs.
 
 3. **Initialize the context structure**
    - Prefer running the bundled script:
@@ -68,12 +78,12 @@ Use a two-stage model:
    - Treat the sync output as the default review plan input: `changed_paths`, `changed_modules`, `sync mode`, and `review scope`.
 
 5. **Review and extend content (mandatory)**
-   - Fill `skill.md` (L1) with **project summary, architecture, entrypoints, build/run, module navigation**.
-   - Fill `modules/<module>/README.md` (overview) and `modules/<module>/<module>.md` (detail).
+   - Fill `skill.md` (L1) with **project summary, architecture, agent routing, entrypoints, build/run, module navigation**.
+   - Load the task-matched agent first, then fill `modules/<module>/README.md` (overview) and `modules/<module>/<module>.md` (detail) through that agent's scope.
    - Fill `references/entrypoints.md` with code-level entrypoints and indexes.
    - Follow this review order strictly:
      1. Inspect Git diff/tree or the sync output first.
-     2. Spot-check only the modules hit by the diff.
+     2. Route to the relevant agent, then spot-check only the modules hit by the diff.
      3. Broaden to a wider source review only when one of these triggers fires:
         - first context build / no previous sync state
         - module map changed
@@ -142,121 +152,14 @@ Use a two-stage model:
   - `fail`: generated context is materially misleading and needs fixes before handoff
 - If the user explicitly asks for a review, present findings first with concrete file references.
 
-## Modules Directory Guidance
+## Detailed References
 
-- `modules/` is generated based on the target codebase (not fixed).
-- Recommended buckets: `frontend`, `backend`, `qa`, `reviewer` (only if inferred).
-- Each module may contain multiple detailed docs; keep an overview `modules/<module>/README.md` and a `modules/<module>/<module>.md` for detailed module notes.
-- If a domain is present (e.g., `mobile`, `data`, `ops`, `infra`), create that module.
+Keep `SKILL.md` lean. Load these references only when needed:
 
-## Generation Rules (Modules & Agents)
-
-### Modules
-
-- Each module folder must include:
-  - `modules/<module>/README.md` (overview)
-  - `modules/<module>/<module>.md` (details: Scope, Key Responsibilities, Important Notes, Interfaces & Dependencies)
-- If a module is large, split into multiple files (e.g., `A.md`, `B.md`, `C.md`). In that case, `<module>.md` becomes an index/summary that describes each sub-file and when to load it.
-
-### Agents
-
-- Create one folder per agent under `agents/<agent>/`.
-- Agent list is inferred from module buckets; always include `reviewer`.
-- Each agent folder must include:
-  - `README.md` with Role, Principles, Responsibilities, Deliverables, Working Style, Notes
-  - `tools.md` (Markdown)
-  - `memory.md` (Markdown)
-  - `decisions.jsonl` (JSONL, one decision per line)
-  - `fails.jsonl` (JSONL, one failure per line)
-- **README.md must also include a brief description of the purpose of other files in the current agent directory.**
-
-## Content Extraction Rules (General)
-
-Keep SKILL.md lean. For detailed extraction guidance (entrypoints, flows, data, tests, i18n), load:
-
-- `references/extraction-rules.md`
-
-## Output Templates (Required)
-
-### L1 (skill.md)
-
-- Project summary (what it is + target users)
-- Architecture & boundaries
-- Entrypoints + build/run
-- Module navigation
-- Progressive loading model (L1/L2/L3)
-- **Spec-driven development**
-  - Spec-first rule (no implementation without a spec)
-  - Spec template (scope, interfaces, edge cases/errors, acceptance criteria, tests)
-  - Change control (spec updates recorded in decisions)
-  - Traceability (code/tests map back to spec items)
-- Keep generated content inside a managed `AUTO` block so manual notes can live around it.
-
-### L2 (modules/<module>/README.md)
-
-- Responsibilities
-- Key areas/files
-- Typical tasks
-- Keep generated content inside a managed `AUTO` block so manual notes can live around it.
-
-### L2 (modules/<module>/<module>.md)
-
-- Scope
-- Key Responsibilities
-- Important Notes (constraints, risks, decisions)
-- Interfaces & Dependencies
-- Key flows (if applicable)
-- Testing/QA hooks
-- Keep generated content inside a managed `AUTO` block so manual notes can live around it.
-
-### L2 (agents/<agent>/README.md)
-
-- Role
-- Principles
-- Responsibilities
-- Deliverables
-- Working Style
-- Notes
-- Description of other files in the agent directory
-
-### L3 (references/entrypoints.md)
-
-- Entry file index
-- Core logic/index files
-- Data/storage index
-- i18n index
-- Build/release/ops entrypoints
-- Keep generated content inside a managed `AUTO` block so manual notes can live around it.
-
-## Quality Checklist (Before Finalizing)
-
-- L1 filled with accurate architecture and run/build info
-- Each module has README + <module>.md
-- References contain concrete file paths
-- Loading paths cover UI/UX, core logic, QA, release scenarios
-- Agent folders exist with clear responsibilities
-- Mandatory review completed after generation/sync
-- No unresolved placeholder `TODO` content in delivered context unless explicitly marked as pending
-- Runtime entrypoints are separated from build/config/release files
-- Major functional modules in the codebase are represented in context, either as top-level modules or documented submodules
-- `project_status.md` and other summary files do not obviously contradict the current project state
-
-## Files Created
-
-- `<target_root>/readme.md` (if missing)
-- `<target_root>/sources/<project_name>/` (when `git_url` is used)
-- `<target_root>/projects/projects.md` (index with new project entry)
-- `<target_root>/projects/<project_name>/readme.md`
-- `<target_root>/projects/<project_name>/goals.md`
-- `<target_root>/projects/<project_name>/skill.md`
-- `<target_root>/projects/<project_name>/project_status.md`
-- `<target_root>/projects/<project_name>/decisions.md`
-- `<target_root>/projects/<project_name>/agents/agents.md`
-- `<target_root>/projects/<project_name>/modules/README.md`
-- `<target_root>/projects/<project_name>/modules/<module>/README.md` (modules inferred from code)
-- `<target_root>/projects/<project_name>/modules/<module>/<module>.md`
-- `<target_root>/projects/<project_name>/references/entrypoints.md`
-- `<target_root>/projects/<project_name>/.context-sync/state.json`
+- `references/extraction-rules.md` — extraction guidance for entrypoints, flows, data, tests, and i18n
+- `references/structure-rules.md` — module and agent directory rules, including how agents map to modules
+- `references/output-templates.md` — required L1/L2/L3 document templates
+- `references/delivery-checklist.md` — final quality checklist and file inventory
 
 ## Resources
 
