@@ -35,7 +35,7 @@ from init_context_project import infer_modules
 from source_resolver import ResolvedSource, SourceResolutionError, normalize_source_locator, resolve_code_source
 
 
-STATE_VERSION = 4
+STATE_VERSION = 5
 AUTO_BLOCK_PATTERN = r"<!-- BEGIN AUTO:{name} -->\n?(.*?)\n?<!-- END AUTO:{name} -->"
 AUTO_BEGIN = "<!-- BEGIN AUTO:{name} -->"
 AUTO_END = "<!-- END AUTO:{name} -->"
@@ -73,6 +73,7 @@ IGNORE_FILE_SUFFIXES = {
     ".7z",
     ".rar",
 }
+MULTI_SOURCE_FILENAMES = ("context-sources.json", ".context-sources.json")
 ALLOWED_DEFAULT_BRANCHES = ("main", "master")
 GLOBAL_CONFIG_FILES = {
     "package.json",
@@ -305,6 +306,90 @@ def command_succeeds(args: list[str], cwd: Path | None = None) -> bool:
 def is_git_repo(code_dir: Path) -> Path | None:
     output = try_command(["git", "-C", str(code_dir), "rev-parse", "--show-toplevel"])
     return Path(output).resolve() if output else None
+
+
+def load_multi_sources(code_dir: Path) -> list[dict] | None:
+    config_path = None
+    for filename in MULTI_SOURCE_FILENAMES:
+        candidate = code_dir / filename
+        if candidate.exists():
+            config_path = candidate
+            break
+    if not config_path:
+        return None
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SyncError(f"Invalid multi-source config at {config_path}: {exc}") from exc
+    sources = payload.get("sources")
+    if not isinstance(sources, list) or not sources:
+        raise SyncError(f"Multi-source config at {config_path} must include a non-empty 'sources' list.")
+    normalized = []
+    seen_names = set()
+    for item in sources:
+        if not isinstance(item, dict):
+            raise SyncError("Each source entry in multi-source config must be an object.")
+        name = str(item.get("name", "")).strip()
+        path_raw = str(item.get("path", "")).strip()
+        if not name or not path_raw:
+            raise SyncError("Each source entry must include 'name' and 'path'.")
+        if name in seen_names:
+            raise SyncError(f"Duplicate source name '{name}' in multi-source config.")
+        source_path = Path(path_raw).expanduser().resolve()
+        if not source_path.exists():
+            raise SyncError(f"Source path does not exist for '{name}': {source_path}")
+        modules = item.get("modules")
+        if modules is not None:
+            if not isinstance(modules, list) or not modules:
+                raise SyncError(f"Source '{name}' modules must be a non-empty list when provided.")
+            modules = [str(module).strip() for module in modules if str(module).strip()]
+        normalized.append({
+            "name": name,
+            "path": source_path,
+            "modules": modules,
+        })
+        seen_names.add(name)
+    return normalized
+
+
+def ensure_multi_symlinks(code_dir: Path, sources: list[dict], allow_mutation: bool) -> None:
+    for source in sources:
+        link_path = code_dir / source["name"]
+        target_path = source["path"]
+        if link_path.exists():
+            continue
+        if not allow_mutation:
+            raise SyncError(
+                f"Missing source link at {link_path}. Create it or rerun without --dry-run."
+            )
+        link_path.parent.mkdir(parents=True, exist_ok=True)
+        link_path.symlink_to(target_path, target_is_directory=True)
+
+
+def infer_modules_from_sources(sources: list[dict]) -> list[str]:
+    modules: set[str] = set()
+    for source in sources:
+        source_modules = source.get("modules")
+        if not source_modules:
+            source_modules = infer_modules(source["path"])
+        for module in source_modules:
+            if module:
+                modules.add(module)
+    modules.add("reviewer")
+    return sorted(modules)
+
+
+def build_module_map_from_sources(sources: list[dict]) -> dict[str, list[str]]:
+    module_map: dict[str, list[str]] = {}
+    for source in sources:
+        source_modules = source.get("modules")
+        if not source_modules:
+            source_modules = infer_modules(source["path"])
+        for module in source_modules:
+            if not module or module == "reviewer":
+                continue
+            module_map.setdefault(module, []).append(source["name"])
+    return {module: sorted(dict.fromkeys(paths)) for module, paths in module_map.items()}
 
 
 def ensure_clean_default_branch(repo_root: Path) -> tuple[str, str]:
@@ -1362,6 +1447,7 @@ def generate_skill_block(
     repo_root: Path | None,
     branch: str | None,
     head: str | None,
+    multi_git: dict[str, dict[str, str | None]] | None = None,
 ) -> str:
     top_entries = limited_paths(list_top_level_entries(code_dir))
     commands = limited_paths(build_run_commands(code_dir))
@@ -1386,6 +1472,13 @@ def generate_skill_block(
                 f"- Git HEAD: `{head or 'unknown'}`",
             ]
         )
+    elif multi_git:
+        lines.append("- Git sources:")
+        for name, meta in sorted(multi_git.items()):
+            repo = meta.get("repo_root") or "unknown"
+            branch = meta.get("branch") or "unknown"
+            head = meta.get("head") or "unknown"
+            lines.append(f"  - `{name}` -> root `{repo}`, branch `{branch}`, head `{head}`")
     else:
         lines.append("- Git repo root: not available; using full sync.")
 
@@ -1672,6 +1765,7 @@ def generate_status_block(
     branch: str | None,
     head: str | None,
     changed_paths: list[str],
+    multi_git: dict[str, dict[str, str | None]] | None = None,
 ) -> str:
     lines = [
         "## Generated Sync Status",
@@ -1698,6 +1792,13 @@ def generate_status_block(
                 f"- Git HEAD: `{head or 'unknown'}`",
             ]
         )
+    elif multi_git:
+        lines.append("- Git sources:")
+        for name, meta in sorted(multi_git.items()):
+            repo = meta.get("repo_root") or "unknown"
+            branch = meta.get("branch") or "unknown"
+            head = meta.get("head") or "unknown"
+            lines.append(f"  - `{name}` -> root `{repo}`, branch `{branch}`, head `{head}`")
     else:
         lines.append("- Git metadata: not available; this project is being synced in full-scan mode.")
 
@@ -1734,6 +1835,7 @@ def build_updates(
     changed_paths: list[str],
     review_plan: ReviewPlan,
     review_record: ReviewRecord,
+    multi_git: dict[str, dict[str, str | None]] | None = None,
 ) -> list[tuple[Path, str, str]]:
     updates: list[tuple[Path, str, str]] = []
     if mode.update_global or mode.name == "full":
@@ -1741,7 +1843,7 @@ def build_updates(
             (
                 layout.skill_path(project_root),
                 "l1",
-                generate_skill_block(project, code_dir, modules, module_map, feature_map, global_paths, mode, manifests, repo_root, branch, head),
+                generate_skill_block(project, code_dir, modules, module_map, feature_map, global_paths, mode, manifests, repo_root, branch, head, multi_git),
             )
         )
         updates.append(
@@ -1830,7 +1932,7 @@ def build_updates(
         (
             layout.project_status_path(project_root),
             "sync-status",
-            generate_status_block(mode, review_plan, review_record, repo_root, branch, head, changed_paths),
+            generate_status_block(mode, review_plan, review_record, repo_root, branch, head, changed_paths, multi_git),
         )
     )
     return updates
@@ -1848,7 +1950,7 @@ def apply_updates(project_root: Path, updates: list[tuple[Path, str, str]]) -> d
 
 
 def determine_sync_mode(
-    git_repo_root: Path | None,
+    has_git: bool,
     current_state: dict,
     module_map: dict[str, list[str]],
     feature_map: dict[str, dict[str, list[str]]],
@@ -1858,7 +1960,7 @@ def determine_sync_mode(
     unmatched_changes: list[str],
     sync_base_issue: str | None,
 ) -> SyncMode:
-    if not git_repo_root:
+    if not has_git:
         return SyncMode("full", [], True, "Non-Git project; full sync only.")
     if not current_state:
         return SyncMode("full", [], True, "No previous sync state found.")
@@ -1887,7 +1989,7 @@ def determine_sync_mode(
 def determine_review_plan(
     project_root: Path,
     code_dir: Path,
-    git_repo_root: Path | None,
+    has_git: bool,
     previous_state: dict,
     module_map: dict[str, list[str]],
     feature_map: dict[str, dict[str, list[str]]],
@@ -1905,7 +2007,7 @@ def determine_review_plan(
             [],
         )
 
-    if not git_repo_root:
+    if not has_git:
         return ReviewPlan(
             "broad-source-review",
             "Non-Git repo: no diff/tree baseline exists for targeted review.",
@@ -2163,6 +2265,8 @@ def main() -> None:
     project_root = layout.project_root(target_root, args.project)
     previous_state = load_state(project_root)
 
+    multi_sources = load_multi_sources(Path(args.code_dir).expanduser().resolve()) if args.code_dir else None
+
     try:
         source = resolve_code_source(
             args.project,
@@ -2176,14 +2280,44 @@ def main() -> None:
 
     code_dir = source.code_dir
 
+    if multi_sources:
+        ensure_multi_symlinks(code_dir, multi_sources, allow_mutation=not args.dry_run)
+
     if not args.dry_run:
         run_init_scaffold(args.project, code_dir, target_root)
 
-    modules = infer_modules(code_dir)
-    module_map, global_paths, _ = discover_module_map(code_dir, modules)
-    feature_map = discover_feature_map(code_dir, module_map)
+    if multi_sources:
+        modules = infer_modules_from_sources(multi_sources)
+        module_map = build_module_map_from_sources(multi_sources)
+        global_paths = []
+        feature_map = discover_feature_map(code_dir, module_map)
+    else:
+        modules = infer_modules(code_dir)
+        module_map, global_paths, _ = discover_module_map(code_dir, modules)
+        feature_map = discover_feature_map(code_dir, module_map)
     git_repo_root = is_git_repo(code_dir)
     validate_source_identity(previous_state, source, git_repo_root)
+
+    multi_git_meta = None
+    has_git = bool(git_repo_root)
+    multi_mode = bool(multi_sources)
+    multi_git = None
+    if multi_sources:
+        multi_git_meta = {}
+        for source_item in multi_sources:
+            repo_root = is_git_repo(source_item["path"])
+            has_git = has_git or bool(repo_root)
+            branch = None
+            head = None
+            if repo_root:
+                head = run_command(["git", "-C", str(repo_root), "rev-parse", "HEAD"])
+                branch = run_command(["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"])
+            multi_git_meta[source_item["name"]] = {
+                "repo_root": str(repo_root) if repo_root else None,
+                "branch": branch,
+                "head": head,
+            }
+        multi_git = multi_git_meta
 
     changed_paths: list[str] = []
     branch: str | None = None
@@ -2196,15 +2330,32 @@ def main() -> None:
             previous_state.get("last_synced_head"),
             bool(previous_state),
         )
+    elif multi_sources:
+        # Aggregate changed paths from each source repo if available
+        changed_paths = []
+        for source_item in multi_sources:
+            repo_root = is_git_repo(source_item["path"])
+            if not repo_root:
+                continue
+            src_changed, src_head, src_branch, src_issue = git_changed_files(
+                repo_root,
+                source_item["path"],
+                None,
+                False,
+            )
+            if src_issue:
+                sync_base_issue = src_issue
+            prefix = source_item["name"].strip('/')
+            changed_paths.extend([f"{prefix}/{path}" for path in src_changed])
 
     changed_modules: list[str] = []
     update_global = True
     unmatched_changes: list[str] = []
-    if git_repo_root and previous_state.get("state_version") == STATE_VERSION:
+    if has_git and previous_state.get("state_version") == STATE_VERSION:
         changed_modules, update_global, unmatched_changes = map_changed_paths(changed_paths, module_map, global_paths)
 
     mode = determine_sync_mode(
-        git_repo_root,
+        has_git,
         previous_state,
         module_map,
         feature_map,
@@ -2221,7 +2372,7 @@ def main() -> None:
     review_plan = determine_review_plan(
         project_root,
         code_dir,
-        git_repo_root,
+        has_git,
         previous_state,
         module_map,
         feature_map,
@@ -2256,6 +2407,7 @@ def main() -> None:
         changed_paths,
         review_plan,
         review_record,
+        multi_git_meta,
     )
 
     conflicts = detect_auto_conflicts(
@@ -2296,6 +2448,18 @@ def main() -> None:
         review_plan,
         review_record,
     )
+    if multi_mode:
+        next_state["source_mode"] = "multi"
+        next_state["multi_sources"] = {
+            src["name"]: {
+                "code_dir": str(src["path"]),
+                "repo_root": (multi_git or {}).get(src["name"], {}).get("repo_root"),
+                "last_synced_head": (multi_git or {}).get(src["name"], {}).get("head"),
+                "last_synced_branch": (multi_git or {}).get(src["name"], {}).get("branch"),
+                "modules": src.get("modules"),
+            }
+            for src in multi_sources
+        }
     if args.dry_run:
         print(f"[dry-run] state -> {state_path(project_root)}")
     else:

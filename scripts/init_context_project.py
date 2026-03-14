@@ -13,9 +13,12 @@ Usage:
 import argparse
 from datetime import datetime
 from pathlib import Path
+import json
 
 import context_layout as layout
 from source_resolver import SourceResolutionError, resolve_code_source
+
+MULTI_SOURCE_FILENAMES = ("context-sources.json", ".context-sources.json")
 
 
 def ensure_parent(path: Path):
@@ -28,6 +31,33 @@ def write_if_missing(path: Path, content: str):
     ensure_parent(path)
     path.write_text(content, encoding="utf-8")
     return True
+
+
+def load_multi_sources(code_dir: Path) -> list[dict] | None:
+    for filename in MULTI_SOURCE_FILENAMES:
+        candidate = code_dir / filename
+        if candidate.exists():
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+            sources = payload.get("sources")
+            if not isinstance(sources, list) or not sources:
+                raise SystemExit(f"Multi-source config at {candidate} must include a non-empty 'sources' list.")
+            normalized = []
+            for item in sources:
+                name = str(item.get("name", "")).strip()
+                path_raw = str(item.get("path", "")).strip()
+                if not name or not path_raw:
+                    raise SystemExit("Each source entry must include 'name' and 'path'.")
+                source_path = Path(path_raw).expanduser().resolve()
+                if not source_path.exists():
+                    raise SystemExit(f"Source path does not exist for '{name}': {source_path}")
+                modules = item.get("modules")
+                if modules is not None:
+                    if not isinstance(modules, list) or not modules:
+                        raise SystemExit(f"Source '{name}' modules must be a non-empty list when provided.")
+                    modules = [str(module).strip() for module in modules if str(module).strip()]
+                normalized.append({"name": name, "path": source_path, "modules": modules})
+            return normalized
+    return None
 
 
 def append_project_index(projects_index: Path, project_name: str):
@@ -185,7 +215,16 @@ def main():
     write_if_missing(layout.entrypoints_path(project_root), "# Entrypoints\n\n- TODO: record key entrypoints and indices.\n")
     write_if_missing(layout.feature_map_path(project_root), "# Feature Map\n\n- TODO: map shared business features across technical modules.\n")
 
-    modules = infer_modules(code_dir)
+    multi_sources = load_multi_sources(code_dir)
+    if multi_sources:
+        modules = set()
+        for source in multi_sources:
+            source_modules = source.get("modules") or infer_modules(source["path"])
+            modules.update(source_modules)
+        modules.add("reviewer")
+        modules = sorted(modules)
+    else:
+        modules = infer_modules(code_dir)
     for module in modules:
         write_if_missing(layout.module_overview_path(project_root, module), f"# {module}\n")
         write_if_missing(
