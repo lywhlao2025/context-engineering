@@ -35,7 +35,7 @@ from init_context_project import infer_modules
 from source_resolver import ResolvedSource, SourceResolutionError, normalize_source_locator, resolve_code_source
 
 
-STATE_VERSION = 1
+STATE_VERSION = 3
 AUTO_BLOCK_PATTERN = r"<!-- BEGIN AUTO:{name} -->\n?(.*?)\n?<!-- END AUTO:{name} -->"
 AUTO_BEGIN = "<!-- BEGIN AUTO:{name} -->"
 AUTO_END = "<!-- END AUTO:{name} -->"
@@ -172,6 +172,12 @@ DATA_KEYWORDS = ("prisma", "schema", "db", "database", "migrations", "migration"
 I18N_KEYWORDS = ("i18n", "locale", "locales", "translation", "translations")
 MAX_DISCOVERED_FILES = 30
 MAX_LISTED_ITEMS = 12
+REVIEW_OUTCOME_CHOICES = ("pending", "pass", "pass_with_findings", "fail")
+LINE_HINTS_BY_FILENAME = {
+    "package.json": ('"scripts"', '"main"', '"exports"', '"bin"'),
+    "pyproject.toml": ("[project.scripts]", "[tool.poetry.scripts]", "[project]"),
+    "Cargo.toml": ("[package]", "[dependencies]"),
+}
 
 
 @dataclass
@@ -188,6 +194,14 @@ class ReviewPlan:
     reason: str
     target_modules: list[str]
     target_paths: list[str]
+
+
+@dataclass
+class ReviewRecord:
+    outcome: str
+    notes: str | None
+    recorded_at: str | None
+    reviewed_head: str | None
 
 
 class SyncError(RuntimeError):
@@ -520,6 +534,10 @@ def resolve_module_targets(mode: SyncMode, modules: list[str]) -> list[str]:
     return sorted(module_targets)
 
 
+def resolve_agent_targets(mode: SyncMode, modules: list[str]) -> list[str]:
+    return resolve_module_targets(mode, modules)
+
+
 def is_entrypoint_sensitive_path(relative_path: str) -> bool:
     return PurePosixPath(relative_path).name in ENTRYPOINT_SENSITIVE_FILE_NAMES
 
@@ -539,7 +557,12 @@ def detect_entrypoint_ambiguity(code_dir: Path, changed_paths: list[str]) -> str
     )
 
 
-def expected_generated_targets(project_root: Path, module_targets: list[str], include_global: bool) -> list[tuple[Path, str]]:
+def expected_generated_targets(
+    project_root: Path,
+    module_targets: list[str],
+    agent_targets: list[str],
+    include_global: bool,
+) -> list[tuple[Path, str]]:
     targets: list[tuple[Path, str]] = []
     if include_global:
         targets.extend(
@@ -547,6 +570,15 @@ def expected_generated_targets(project_root: Path, module_targets: list[str], in
                 (layout.skill_path(project_root), "l1"),
                 (layout.entrypoints_path(project_root), "entrypoints"),
                 (layout.modules_index_path(project_root), "module-index"),
+                (layout.agents_index_path(project_root), "agent-index"),
+            ]
+        )
+    for agent in agent_targets:
+        targets.extend(
+            [
+                (layout.agent_readme_path(project_root, agent), "agent-readme"),
+                (layout.agent_tools_path(project_root, agent), "agent-tools"),
+                (layout.agent_memory_path(project_root, agent), "agent-memory"),
             ]
         )
     for module in module_targets:
@@ -560,9 +592,14 @@ def expected_generated_targets(project_root: Path, module_targets: list[str], in
     return targets
 
 
-def detect_context_scope_mismatch(project_root: Path, module_targets: list[str], include_global: bool) -> list[str]:
+def detect_context_scope_mismatch(
+    project_root: Path,
+    module_targets: list[str],
+    agent_targets: list[str],
+    include_global: bool,
+) -> list[str]:
     missing: list[str] = []
-    for file_path, block_name in expected_generated_targets(project_root, module_targets, include_global):
+    for file_path, block_name in expected_generated_targets(project_root, module_targets, agent_targets, include_global):
         relative_doc_path = file_path.relative_to(project_root).as_posix()
         if not file_path.exists():
             missing.append(f"{relative_doc_path} [{block_name}]")
@@ -642,9 +679,62 @@ def limited_paths(paths: list[str], limit: int = MAX_LISTED_ITEMS) -> list[str]:
     return paths[:limit] + [f"... and {remaining} more"]
 
 
-def format_list(items: list[str], empty_message: str) -> list[str]:
+def first_meaningful_line(file_path: Path) -> int | None:
+    try:
+        lines = file_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        for hint in LINE_HINTS_BY_FILENAME.get(file_path.name, ()):
+            for line_number, line in enumerate(lines, start=1):
+                if hint in line:
+                    return line_number
+        for line_number, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped in {"{", "}", "[", "]", "(", ")"}:
+                continue
+            if stripped.startswith(("#", "//", "/*", "*", "--", ";", "<!--")):
+                continue
+            return line_number
+    except OSError:
+        return None
+    return 1 if file_path.exists() else None
+
+
+def first_evidence_file(path: Path) -> Path | None:
+    if path.is_file():
+        return path
+    if not path.is_dir():
+        return None
+    for candidate in walk_files(path):
+        return candidate
+    return None
+
+
+def format_line_ref(relative_path: str, line_number: int | None) -> str:
+    if line_number:
+        return f"`{relative_path}:{line_number}`"
+    return f"`{relative_path}`"
+
+
+def path_line_ref(code_dir: Path, relative_path: str) -> str:
+    candidate = code_dir / relative_path
+    evidence_file = first_evidence_file(candidate)
+    if not evidence_file:
+        return format_line_ref(relative_path, None)
+    relative = evidence_file.relative_to(code_dir).as_posix()
+    return format_line_ref(relative, first_meaningful_line(evidence_file))
+
+
+def line_refs_for_paths(code_dir: Path, paths: list[str], limit: int = MAX_LISTED_ITEMS) -> list[str]:
+    refs = [path_line_ref(code_dir, path) for path in paths]
+    return limited_paths(list(dict.fromkeys(refs)), limit)
+
+
+def format_list(items: list[str], empty_message: str, *, quote: bool = True) -> list[str]:
     if not items:
         return [f"- {empty_message}"]
+    if not quote:
+        return [f"- {item}" for item in items]
     return [f"- `{item}`" for item in items]
 
 
@@ -826,6 +916,186 @@ def module_tasks(module: str) -> list[str]:
     return tasks.get(module, ["Review code changes inside this module.", "Track module-specific risks and dependencies."])
 
 
+def module_line_refs(code_dir: Path, module_paths: list[str]) -> list[str]:
+    key_files = module_key_files(code_dir, module_paths)
+    if key_files:
+        return line_refs_for_paths(code_dir, key_files)
+    return line_refs_for_paths(code_dir, module_paths)
+
+
+def build_manifest_refs(code_dir: Path) -> list[str]:
+    manifests = [
+        name
+        for name in (
+            "package.json",
+            "pyproject.toml",
+            "requirements.txt",
+            "Makefile",
+            "go.mod",
+            "Cargo.toml",
+            "pom.xml",
+            "build.gradle",
+            "build.gradle.kts",
+            "Dockerfile",
+            "docker-compose.yml",
+            "docker-compose.yaml",
+            "compose.yml",
+            "compose.yaml",
+        )
+        if (code_dir / name).exists()
+    ]
+    return line_refs_for_paths(code_dir, manifests)
+
+
+def agent_scope_paths(agent: str, module_map: dict[str, list[str]]) -> list[str]:
+    if agent == "reviewer":
+        flattened = []
+        for module, module_paths in sorted(module_map.items()):
+            if module == "reviewer":
+                continue
+            flattened.extend(module_paths)
+        return sorted(dict.fromkeys(flattened))
+    return module_map.get(agent, [])
+
+
+def agent_role(agent: str) -> str:
+    if agent == "reviewer":
+        return "Routes cross-module review work, checks risks, and widens scope when localized review is unsafe."
+    return f"Acts as the first-stop sub-agent for `{agent}` work before deeper module detail is loaded."
+
+
+def agent_principles(agent: str) -> list[str]:
+    principles = [
+        "Start from the agent scope before loading deeper module detail.",
+        "Support important claims with file-and-line evidence from the current code snapshot.",
+        "Escalate to broader review when entrypoints, boundaries, or diff-to-context mapping are ambiguous.",
+    ]
+    if agent == "reviewer":
+        principles.append("Prefer risk surfacing and boundary checks over rewriting large amounts of text.")
+    return principles
+
+
+def agent_deliverables(agent: str) -> list[str]:
+    if agent == "reviewer":
+        return [
+            "Cross-module findings with file and line references.",
+            "Review outcome recommendation: pass, pass with findings, or fail.",
+        ]
+    return [
+        f"Scoped `{agent}` summaries tied to concrete code references.",
+        f"`{agent}` risks, entrypoints, dependencies, and test hooks for downstream review.",
+    ]
+
+
+def generate_agents_index_block(modules: list[str], module_map: dict[str, list[str]]) -> str:
+    lines = [
+        "## Generated Agent Index",
+        "- Route through the task-matched agent before loading module details.",
+    ]
+    for agent in modules:
+        if agent == "reviewer":
+            lines.append(
+                f"- `reviewer`: start at `{layout.AGENTS_DIRNAME}/reviewer/{layout.AGENT_README_FILENAME}`, "
+                f"then widen into changed modules or `{layout.REFERENCES_DIRNAME}/{layout.ENTRYPOINTS_FILENAME}`."
+            )
+            continue
+        scope_paths = module_map.get(agent, [])
+        scope_text = ", ".join(f"`{path}`" for path in scope_paths) if scope_paths else "no stable path mapping inferred yet"
+        lines.append(
+            f"- `{agent}`: start at `{layout.AGENTS_DIRNAME}/{agent}/{layout.AGENT_README_FILENAME}`, "
+            f"then load `{layout.relative_module_overview(agent)}`. Scope: {scope_text}."
+        )
+    return "\n".join(lines)
+
+
+def generate_agent_readme_block(agent: str, code_dir: Path, module_map: dict[str, list[str]]) -> str:
+    scope_paths = agent_scope_paths(agent, module_map)
+    evidence_refs = limited_paths(module_line_refs(code_dir, scope_paths))
+    lines = [
+        "## Generated Agent Profile",
+        f"- Role: {agent_role(agent)}",
+        "",
+        "## Principles",
+        *[f"- {item}" for item in agent_principles(agent)],
+        "",
+        "## Responsibilities",
+        *[f"- {task}" for task in module_tasks(agent)],
+        "",
+        "## Deliverables",
+        *[f"- {item}" for item in agent_deliverables(agent)],
+        "",
+        "## Working Style",
+        f"- Start with `{layout.AGENT_README_FILENAME}`, load `{layout.AGENT_TOOLS_FILENAME}` and `{layout.AGENT_MEMORY_FILENAME}` only when needed, then move into the module docs.",
+        "- Keep the review scoped to the mapped module roots unless the diff or evidence says that is unsafe.",
+        "",
+        "## Scope Evidence",
+        *format_list(evidence_refs, "No representative line-level evidence was discovered automatically.", quote=False),
+        "",
+        "## Directory Guide",
+        f"- `{layout.AGENT_TOOLS_FILENAME}`: commands, entrypoints, and practical inspection starting points.",
+        f"- `{layout.AGENT_MEMORY_FILENAME}`: stable scope notes, adjacent modules, and escalation triggers.",
+        f"- `{layout.AGENT_DECISIONS_FILENAME}`: durable decisions for this agent.",
+        f"- `{layout.AGENT_FAILS_FILENAME}`: repeated failure modes and review misses.",
+    ]
+    return "\n".join(lines)
+
+
+def generate_agent_tools_block(agent: str, code_dir: Path, module_map: dict[str, list[str]]) -> str:
+    scope_paths = agent_scope_paths(agent, module_map)
+    commands = limited_paths(build_run_commands(code_dir))
+    manifest_refs = limited_paths(build_manifest_refs(code_dir))
+    if agent == "reviewer":
+        entrypoint_refs = limited_paths(line_refs_for_paths(code_dir, entrypoint_candidates(code_dir)))
+        test_refs = limited_paths(line_refs_for_paths(code_dir, test_paths(code_dir)))
+    else:
+        entrypoint_refs = limited_paths(line_refs_for_paths(code_dir, module_entrypoints(code_dir, scope_paths)))
+        test_refs = limited_paths(line_refs_for_paths(code_dir, module_test_paths(code_dir, scope_paths)))
+    lines = [
+        "## Generated Tools Guide",
+        "- Preferred commands:",
+        *format_list(commands, "No common commands discovered automatically."),
+        "- Command manifest evidence:",
+        *format_list(manifest_refs, "No build or runtime manifests discovered automatically.", quote=False),
+        "- Entrypoint evidence:",
+        *format_list(entrypoint_refs, "No scoped entrypoint evidence discovered automatically.", quote=False),
+        "- Testing evidence:",
+        *format_list(test_refs, "No scoped testing evidence discovered automatically.", quote=False),
+    ]
+    return "\n".join(lines)
+
+
+def generate_agent_memory_block(agent: str, code_dir: Path, module_map: dict[str, list[str]]) -> str:
+    scope_paths = agent_scope_paths(agent, module_map)
+    evidence_refs = limited_paths(module_line_refs(code_dir, scope_paths))
+    adjacent_modules = [
+        name
+        for name, paths in sorted(module_map.items())
+        if name != agent and name != "reviewer" and paths
+    ]
+    lines = [
+        "## Generated Working Memory",
+        "- Stable scope roots:",
+    ]
+    if scope_paths:
+        lines.extend(f"- `{path}`" for path in limited_paths(scope_paths))
+    else:
+        lines.append("- No stable scope roots inferred automatically.")
+    lines.extend(
+        [
+            "- Adjacent modules:",
+            *format_list(adjacent_modules[:4], "No adjacent modules inferred yet."),
+            "- Re-entry evidence:",
+            *format_list(evidence_refs, "No representative evidence recorded automatically.", quote=False),
+            "- Escalation triggers:",
+            "- Widen review when entrypoint-sensitive files change or when the diff no longer maps cleanly to this agent scope.",
+            "- Record durable decisions outside this AUTO block in `decisions.jsonl` or the project-level `decisions.md`.",
+        ]
+    )
+    if agent == "reviewer":
+        lines.append("- Reviewer memory should preserve recurring cross-module risks, stale docs, and missed test coverage patterns.")
+    return "\n".join(lines)
+
+
 def generate_skill_block(
     project: str,
     code_dir: Path,
@@ -840,8 +1110,11 @@ def generate_skill_block(
 ) -> str:
     top_entries = limited_paths(list_top_level_entries(code_dir))
     commands = limited_paths(build_run_commands(code_dir))
-    entrypoints = limited_paths(entrypoint_candidates(code_dir))
+    command_evidence = limited_paths(build_manifest_refs(code_dir))
+    raw_entrypoints = entrypoint_candidates(code_dir)
+    entrypoint_refs = limited_paths(line_refs_for_paths(code_dir, raw_entrypoints))
     docs = limited_paths(docs_paths(code_dir))
+    manifest_refs = limited_paths(line_refs_for_paths(code_dir, manifests))
 
     lines = [
         "## Generated Context Summary",
@@ -871,6 +1144,8 @@ def generate_skill_block(
             *format_list(docs, "No README/docs files discovered at the code root."),
             "- Tech signals:",
             *format_list(manifests, "No known build/runtime manifest found at the code root."),
+            "- Tech-signal evidence:",
+            *format_list(manifest_refs, "No manifest line references discovered automatically.", quote=False),
             "",
             "## Architecture And Boundaries",
             "- Global paths watched by sync:",
@@ -895,8 +1170,10 @@ def generate_skill_block(
             "## Entrypoints And Build Or Run",
             "- Common commands:",
             *format_list(commands, "No common commands discovered automatically."),
+            "- Command manifest evidence:",
+            *format_list(command_evidence, "No command manifest line references discovered automatically.", quote=False),
             "- Candidate entrypoints:",
-            *format_list(entrypoints, "No common entrypoint files discovered automatically."),
+            *format_list(entrypoint_refs, "No common entrypoint files discovered automatically.", quote=False),
             "",
             "## Module Navigation",
         ]
@@ -955,13 +1232,13 @@ def generate_modules_index_block(modules: list[str], module_map: dict[str, list[
 
 
 def generate_module_overview_block(module: str, code_dir: Path, module_paths: list[str]) -> str:
-    key_files = limited_paths(module_key_files(code_dir, module_paths))
+    key_files = limited_paths(module_line_refs(code_dir, module_paths))
     tasks = module_tasks(module)
     lines = [
         "## Generated Overview",
         f"- Responsibility: {module_responsibility(module)}",
-        "- Key areas/files:",
-        *format_list(key_files or module_paths, "No concrete files discovered yet."),
+        "- Key areas/files with line evidence:",
+        *format_list(key_files, "No concrete line-level evidence discovered yet.", quote=False),
         "- Typical tasks:",
         *[f"- {task}" for task in tasks],
     ]
@@ -969,25 +1246,25 @@ def generate_module_overview_block(module: str, code_dir: Path, module_paths: li
 
 
 def generate_module_detail_block(module: str, code_dir: Path, module_paths: list[str], module_map: dict[str, list[str]]) -> str:
-    key_files = limited_paths(module_key_files(code_dir, module_paths))
-    entrypoints = limited_paths(module_entrypoints(code_dir, module_paths))
-    tests = limited_paths(module_test_paths(code_dir, module_paths))
+    key_files = limited_paths(module_line_refs(code_dir, module_paths))
+    entrypoints = limited_paths(line_refs_for_paths(code_dir, module_entrypoints(code_dir, module_paths)))
+    tests = limited_paths(line_refs_for_paths(code_dir, module_test_paths(code_dir, module_paths)))
     sibling_modules = [name for name, paths in module_map.items() if name != module and paths]
     lines = [
-        "## Scope",
-        f"- Covers: {', '.join(f'`{path}`' for path in module_paths) if module_paths else 'No stable path mapping inferred yet.'}",
-        "",
-        "## Key Responsibilities",
-        f"- {module_responsibility(module)}",
-        "- Key files:",
-        *format_list(key_files, "No representative files discovered automatically."),
-        "",
-        "## Important Notes",
+        "## Generated Evidence Snapshot",
         "- Content inside this AUTO block is managed by `scripts/sync_context_project.py`.",
         "- Add durable manual notes outside the AUTO block so sync can preserve them.",
         "- If this block is edited manually, future syncs stop unless `--force-generated` is used.",
         "",
-        "## Interfaces And Dependencies",
+        "### Scope Evidence",
+        f"- Covers: {', '.join(f'`{path}`' for path in module_paths) if module_paths else 'No stable path mapping inferred yet.'}",
+        "",
+        "### Responsibility Evidence",
+        f"- {module_responsibility(module)}",
+        "- Key files with line evidence:",
+        *format_list(key_files, "No representative line-level evidence discovered automatically.", quote=False),
+        "",
+        "### Dependency Evidence",
     ]
     if sibling_modules:
         lines.extend(f"- See `{name}` module for adjacent behavior." for name in sibling_modules[:4])
@@ -996,36 +1273,39 @@ def generate_module_detail_block(module: str, code_dir: Path, module_paths: list
     lines.extend(
         [
             "",
-            "## Key Flows",
-            "- Candidate entrypoints:",
-            *format_list(entrypoints, "No common entrypoint files discovered inside this module."),
+            "### Flow Entrypoints",
+            "- Candidate entrypoints with line evidence:",
+            *format_list(entrypoints, "No common entrypoint line references discovered inside this module.", quote=False),
             "",
-            "## Testing Or QA Hooks",
-            *format_list(tests, "No module-local test paths discovered automatically."),
+            "### Testing Hooks",
+            *format_list(tests, "No module-local test evidence discovered automatically.", quote=False),
         ]
     )
     return "\n".join(lines)
 
 
 def generate_entrypoints_block(code_dir: Path) -> str:
-    entrypoints = limited_paths(entrypoint_candidates(code_dir))
-    data_items = limited_paths(data_paths(code_dir))
-    i18n_items = limited_paths(i18n_paths(code_dir))
-    test_items = limited_paths(test_paths(code_dir))
+    entrypoints = limited_paths(line_refs_for_paths(code_dir, entrypoint_candidates(code_dir)))
+    data_items = limited_paths(line_refs_for_paths(code_dir, data_paths(code_dir)))
+    i18n_items = limited_paths(line_refs_for_paths(code_dir, i18n_paths(code_dir)))
+    test_items = limited_paths(line_refs_for_paths(code_dir, test_paths(code_dir)))
     build_items = limited_paths(build_run_commands(code_dir))
+    build_refs = limited_paths(build_manifest_refs(code_dir))
 
     lines = [
         "## Generated Entrypoints Index",
         "- Entry file index:",
-        *format_list(entrypoints, "No common entrypoints discovered automatically."),
+        *format_list(entrypoints, "No common entrypoints discovered automatically.", quote=False),
         "- Data or storage index:",
-        *format_list(data_items, "No data or storage paths discovered automatically."),
+        *format_list(data_items, "No data or storage paths discovered automatically.", quote=False),
         "- i18n index:",
-        *format_list(i18n_items, "No i18n or locale paths discovered automatically."),
+        *format_list(i18n_items, "No i18n or locale paths discovered automatically.", quote=False),
         "- Testing and QA index:",
-        *format_list(test_items, "No test or QA paths discovered automatically."),
+        *format_list(test_items, "No test or QA paths discovered automatically.", quote=False),
         "- Build or release or ops entrypoints:",
         *format_list(build_items, "No common build or runtime commands discovered automatically."),
+        "- Build manifest evidence:",
+        *format_list(build_refs, "No build manifest line references discovered automatically.", quote=False),
     ]
     return "\n".join(lines)
 
@@ -1033,6 +1313,7 @@ def generate_entrypoints_block(code_dir: Path) -> str:
 def generate_status_block(
     mode: SyncMode,
     review_plan: ReviewPlan,
+    review_record: ReviewRecord,
     repo_root: Path | None,
     branch: str | None,
     head: str | None,
@@ -1045,7 +1326,16 @@ def generate_status_block(
         f"- Sync reason: {mode.reason}",
         f"- Review scope: `{review_plan.scope}`",
         f"- Review reason: {review_plan.reason}",
+        f"- Review outcome: `{display_review_outcome(review_record.outcome)}`",
     ]
+    if review_record.recorded_at:
+        lines.append(f"- Review recorded at: `{review_record.recorded_at}`")
+    else:
+        lines.append("- Review recorded at: not recorded yet; this sync is still pending review completion.")
+    if review_record.notes:
+        lines.append(f"- Review notes: {review_record.notes}")
+    else:
+        lines.append("- Review notes: none recorded")
     if repo_root:
         lines.extend(
             [
@@ -1088,6 +1378,7 @@ def build_updates(
     head: str | None,
     changed_paths: list[str],
     review_plan: ReviewPlan,
+    review_record: ReviewRecord,
 ) -> list[tuple[Path, str, str]]:
     updates: list[tuple[Path, str, str]] = []
     if mode.update_global or mode.name == "full":
@@ -1112,8 +1403,39 @@ def build_updates(
                 generate_modules_index_block(modules, module_map),
             )
         )
+        updates.append(
+            (
+                layout.agents_index_path(project_root),
+                "agent-index",
+                generate_agents_index_block(modules, module_map),
+            )
+        )
 
     module_targets = resolve_module_targets(mode, modules)
+    agent_targets = resolve_agent_targets(mode, modules)
+
+    for agent in agent_targets:
+        updates.append(
+            (
+                layout.agent_readme_path(project_root, agent),
+                "agent-readme",
+                generate_agent_readme_block(agent, code_dir, module_map),
+            )
+        )
+        updates.append(
+            (
+                layout.agent_tools_path(project_root, agent),
+                "agent-tools",
+                generate_agent_tools_block(agent, code_dir, module_map),
+            )
+        )
+        updates.append(
+            (
+                layout.agent_memory_path(project_root, agent),
+                "agent-memory",
+                generate_agent_memory_block(agent, code_dir, module_map),
+            )
+        )
 
     for module in module_targets:
         module_paths = module_map.get(module, [])
@@ -1136,7 +1458,7 @@ def build_updates(
         (
             layout.project_status_path(project_root),
             "sync-status",
-            generate_status_block(mode, review_plan, repo_root, branch, head, changed_paths),
+            generate_status_block(mode, review_plan, review_record, repo_root, branch, head, changed_paths),
         )
     )
     return updates
@@ -1265,9 +1587,11 @@ def determine_review_plan(
         )
 
     scoped_modules = sorted(changed_modules)
+    scoped_agents = resolve_agent_targets(mode, scoped_modules)
     scope_mismatch = detect_context_scope_mismatch(
         project_root,
         scoped_modules,
+        scoped_agents,
         mode.update_global or mode.name == "full",
     )
     if scope_mismatch:
@@ -1287,6 +1611,52 @@ def determine_review_plan(
         scoped_modules,
         changed_paths,
     )
+
+
+def normalize_review_outcome(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized not in REVIEW_OUTCOME_CHOICES:
+        choices = ", ".join(f"`{item}`" for item in ("pending", "pass", "pass-with-findings", "fail"))
+        raise SyncError(f"Invalid review outcome `{value}`. Expected one of {choices}.")
+    return normalized
+
+
+def display_review_outcome(value: str) -> str:
+    return value.replace("_", " ")
+
+
+def determine_review_record(
+    previous_state: dict,
+    mode: SyncMode,
+    current_head: str | None,
+    requested_outcome: str | None,
+    requested_notes: str | None,
+) -> ReviewRecord:
+    normalized_outcome = normalize_review_outcome(requested_outcome)
+    if requested_notes and not normalized_outcome:
+        raise SyncError("`--review-notes` requires `--review-outcome`.")
+
+    if mode.name == "noop":
+        review_record = ReviewRecord(
+            previous_state.get("last_review_outcome") or "pending",
+            previous_state.get("last_review_notes"),
+            previous_state.get("last_review_at"),
+            previous_state.get("last_review_head"),
+        )
+    else:
+        review_record = ReviewRecord("pending", None, None, None)
+
+    if normalized_outcome:
+        review_record = ReviewRecord(
+            normalized_outcome,
+            requested_notes.strip() if requested_notes else None,
+            now_iso(),
+            current_head,
+        )
+
+    return review_record
 
 
 def validate_source_identity(previous_state: dict, source: ResolvedSource, git_repo_root: Path | None) -> None:
@@ -1341,6 +1711,7 @@ def prepare_state(
     generated_hashes: dict[str, str],
     mode: SyncMode,
     review_plan: ReviewPlan,
+    review_record: ReviewRecord,
 ) -> dict:
     merged_hashes = dict(previous_state.get("generated_hashes") or {})
     merged_hashes.update(generated_hashes)
@@ -1359,6 +1730,10 @@ def prepare_state(
         "last_review_scope": review_plan.scope,
         "last_review_reason": review_plan.reason,
         "last_review_modules": review_plan.target_modules,
+        "last_review_outcome": review_record.outcome,
+        "last_review_notes": review_record.notes,
+        "last_review_at": review_record.recorded_at,
+        "last_review_head": review_record.reviewed_head,
         "module_map": module_map,
         "global_paths": global_paths,
         "generated_hashes": merged_hashes,
@@ -1385,6 +1760,14 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         help="Show what would be updated without writing files.",
+    )
+    parser.add_argument(
+        "--review-outcome",
+        help="Record the review result for this sync: pending, pass, pass-with-findings, or fail.",
+    )
+    parser.add_argument(
+        "--review-notes",
+        help="Optional short review summary or findings note. Requires --review-outcome.",
     )
     args = parser.parse_args()
 
@@ -1457,6 +1840,13 @@ def main() -> None:
         unmatched_changes,
         sync_base_issue,
     )
+    review_record = determine_review_record(
+        previous_state,
+        mode,
+        current_head,
+        args.review_outcome,
+        args.review_notes,
+    )
 
     manifests = detect_manifests(code_dir)
     updates = build_updates(
@@ -1473,6 +1863,7 @@ def main() -> None:
         current_head,
         changed_paths,
         review_plan,
+        review_record,
     )
 
     conflicts = detect_auto_conflicts(
@@ -1510,6 +1901,7 @@ def main() -> None:
         generated_hashes,
         mode,
         review_plan,
+        review_record,
     )
     if args.dry_run:
         print(f"[dry-run] state -> {state_path(project_root)}")
@@ -1520,6 +1912,7 @@ def main() -> None:
     print(f"Reason: {mode.reason}")
     print(f"Review scope: {review_plan.scope}")
     print(f"Review reason: {review_plan.reason}")
+    print(f"Review outcome: {display_review_outcome(review_record.outcome)}")
     if changed_paths:
         print(f"Changed paths: {len(changed_paths)}")
     if mode.changed_modules:

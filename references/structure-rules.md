@@ -35,6 +35,7 @@ Use this reference when you need the detailed project-context structure rules fo
 - Create one folder per agent under `agents/<agent>/`.
 - Agent list is inferred from module buckets; always include `reviewer`.
 - Each agent should act as the routing layer that decides which module docs to load for its task.
+- Agent docs are part of the generated context contract; they must be filled with usable initialization content during sync, not left as empty shells.
 - Each agent folder must include:
   - `README.md` with Role, Principles, Responsibilities, Deliverables, Working Style, Notes
   - `tools.md` (Markdown)

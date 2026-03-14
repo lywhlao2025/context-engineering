@@ -20,7 +20,7 @@ Use this reference when filling generated L1/L2/L3 context documents.
 ## L2 (`modules/<module>/README.md`)
 
 - Responsibilities
-- Key areas/files
+- Key areas/files with file + line evidence
 - Typical tasks
 - Keep generated content inside a managed `AUTO` block so manual notes can live around it.
 
@@ -30,8 +30,9 @@ Use this reference when filling generated L1/L2/L3 context documents.
 - Key Responsibilities
 - Important Notes (constraints, risks, decisions)
 - Interfaces & Dependencies
-- Key flows (if applicable)
-- Testing/QA hooks
+- Key flows with file + line evidence when applicable
+- Testing/QA hooks with file + line evidence when applicable
+- If an AUTO block is present, it should act as a generated evidence supplement layer rather than repeating the same top-level section headings verbatim.
 - Keep generated content inside a managed `AUTO` block so manual notes can live around it.
 
 ## L2 (`agents/<agent>/README.md`)
@@ -44,10 +45,11 @@ Use this reference when filling generated L1/L2/L3 context documents.
 - Notes
 - Module-loading responsibility for this agent
 - Description of other files in the agent directory
+- Generated content must be usable as real sub-agent initialization context, not left as placeholders or TODO-only text.
 
 ## L3 (`references/entrypoints.md`)
 
-- Entry file index
+- Entry file index with file + line evidence
 - Core logic/index files
 - Data/storage index
 - i18n index

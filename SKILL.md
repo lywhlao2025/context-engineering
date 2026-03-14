@@ -23,7 +23,7 @@ Use a two-stage model:
 
 ### Preferred Load Order
 
-1. Load project `SKILL.md`.
+1. Load project `skill.md`.
 2. Route the task to the relevant agent under `agents/<agent>/`.
 3. Load that agent's `README.md` first, then `tools.md` and `memory.md` if needed.
 4. Let the active agent choose which module to inspect.
@@ -75,11 +75,14 @@ Use a two-stage model:
    - If the sync state is missing, invalid, the previous sync head is not usable on the current default branch, or the module map changed, the sync falls back to a full refresh.
    - Once a project context exists, keep it bound to the same source. If the user wants to analyze a different repo, use a new `project_name`.
    - Sync only updates managed `AUTO` blocks. Manual notes outside those blocks are preserved.
+   - Sync also fills `agents/agents.md` plus each active agent's `README.md`, `tools.md`, and `memory.md`; agent docs must not stay as empty placeholders after generation.
    - If a managed `AUTO` block was edited manually after the last sync, the sync stops unless `--force-generated` is passed.
+   - Record the review result with `--review-outcome` (`pending`, `pass`, `pass-with-findings`, `fail`) once the review pass is complete. Every sync with code changes resets the recorded outcome back to `pending` until a new review is recorded.
    - Treat the sync output as the default review plan input: `changed_paths`, `changed_modules`, `sync mode`, and `review scope`.
 
 5. **Review and extend content (mandatory)**
    - Fill `skill.md` (L1) with **project summary, architecture, agent routing, entrypoints, build/run, module navigation**.
+   - Fill `agents/agents.md`, `agents/<agent>/README.md`, `agents/<agent>/tools.md`, and `agents/<agent>/memory.md` with non-placeholder content so the routed sub-agent can initialize with real project context.
    - Load the task-matched agent first, then fill `modules/<module>/README.md` (overview) and `modules/<module>/<module>.md` (detail) through that agent's scope.
    - Fill `references/entrypoints.md` with code-level entrypoints and indexes.
    - Important technical claims must come from line-level code inspection inside the chosen scope, not just file-name or folder-name inference.
@@ -112,6 +115,7 @@ Use a two-stage model:
 
 - Sync state lives at `<target_root>/projects/<project_name>/.context-sync/state.json`.
 - The state file records the last successful sync snapshot, module map, watched global paths, hashes for generated `AUTO` blocks, the last synced default-branch head, and source metadata.
+- The state file also records the latest review outcome. Use `pending` until an explicit `pass`, `pass with findings`, or `fail` review result has been recorded for the current sync.
 - Incremental sync is attempted only for `Git` projects with a valid state file and a clean checked-out default branch (`main` or `master`).
 - Incremental sync uses the local checked-out default branch as the source of truth. It must not auto-checkout another branch or auto-pull, because that would mutate the user's repo state.
 - For managed `git_url` sources under `<target_root>/sources/<project_name>`, the skill may fetch and fast-forward the managed checkout before analysis.
@@ -135,6 +139,7 @@ Use a two-stage model:
 ## Mandatory Review Standard
 
 - Every generated or synced project context must receive a review pass before the task is considered complete.
+- A sync with code changes is not considered fully handed off until the recorded review outcome moves from `pending` to `pass`, `pass with findings`, or `fail`.
 - The default review path is **not** a broad source reread. Start from Git diff/tree and compare generated docs against the affected scope first.
 - Broader source review is reserved for these triggers:
   - first build or missing sync state

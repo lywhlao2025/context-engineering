@@ -81,7 +81,8 @@ TEMPLATE_DECISIONS = """# Decisions
 
 TEMPLATE_AGENTS = """# Agents
 
-- Agent notes for this project live here.
+- Agent routing notes for this project live here.
+- Run `scripts/sync_context_project.py` to populate managed AUTO blocks for the active agents.
 """
 
 TEMPLATE_MODULES_README = """# Modules
@@ -193,10 +194,20 @@ def main():
     for agent in agent_names:
         write_if_missing(
             layout.agent_readme_path(project_root, agent),
-            f"# {agent.title()} — {agent.title()} Agent\n\n## Role\n- TODO: define role and scope.\n\n## Principles\n- TODO: list guiding principles.\n\n## Responsibilities\n- TODO: list responsibilities.\n\n## Deliverables\n- TODO: list expected outputs.\n\n## Working Style\n- TODO: describe working preferences.\n\n## Notes\n- TODO: add project-specific context.\n",
+            (
+                f"# {agent.title()} — {agent.title()} Agent\n\n"
+                "Keep durable manual notes outside the managed AUTO block.\n"
+                "Run `scripts/sync_context_project.py` to generate the initial agent profile.\n"
+            ),
         )
-        write_if_missing(layout.agent_tools_path(project_root, agent), "# Tools\n\n- TODO: tool usage notes.\n")
-        write_if_missing(layout.agent_memory_path(project_root, agent), "# Memory\n\n- TODO: long-term notes.\n")
+        write_if_missing(
+            layout.agent_tools_path(project_root, agent),
+            "# Tools\n\n- Managed AUTO content is populated by sync.\n- Add durable manual tool notes outside the AUTO block.\n",
+        )
+        write_if_missing(
+            layout.agent_memory_path(project_root, agent),
+            "# Memory\n\n- Managed AUTO content is populated by sync.\n- Add durable manual memory notes outside the AUTO block.\n",
+        )
         write_if_missing(layout.agent_decisions_path(project_root, agent), "")
         write_if_missing(layout.agent_fails_path(project_root, agent), "")
 

@@ -15,6 +15,7 @@ The goal is to keep project context lightweight, navigable, and safe to update o
 - Accepts either a local checkout (`--code-dir`) or a Git source (`--git-url`).
 - Infers module buckets such as `frontend`, `backend`, `qa`, `mobile`, `data`, `ops`, and `reviewer`.
 - Creates project-level docs, per-module docs, and per-agent folders.
+- Fills agent docs (`agents.md`, per-agent `README.md`, `tools.md`, `memory.md`) during sync so sub-agents have real initialization context.
 - Uses Git-first incremental sync only from a clean checked-out default branch (`main` or `master`) when a valid prior sync state exists.
 - Falls back to full sync when the repo is non-Git, the module map changes, or the diff is too broad.
 - Rewrites only managed `AUTO` blocks so manual notes outside those blocks survive syncs.
@@ -120,13 +121,17 @@ python3 scripts/sync_context_project.py \
   (--code-dir <absolute-code-dir> | --git-url <git-url>) \
   [--target-root <context-root>] \
   [--dry-run] \
-  [--force-generated]
+  [--force-generated] \
+  [--review-outcome <pending|pass|pass-with-findings|fail>] \
+  [--review-notes "<summary>"]
 ```
 
 Flags:
 
 - `--dry-run`: print planned updates without writing files.
 - `--force-generated`: overwrite conflicting generated `AUTO` blocks.
+- `--review-outcome`: record the review result for the current sync snapshot.
+- `--review-notes`: optional short note to store with the recorded review result.
 
 `--dry-run` with `--git-url` requires an existing managed checkout. It will not clone or fetch sources.
 
@@ -161,9 +166,15 @@ Sync state is stored in:
 <target-root>/projects/<project>/.context-sync/state.json
 ```
 
+The state file now tracks the review result as machine-readable metadata. Any sync with code changes resets the recorded outcome to `pending` until a new `pass`, `pass with findings`, or `fail` result is recorded.
+
 The sync currently updates generated `AUTO` blocks in:
 
 - `skill.md`
+- `agents/agents.md`
+- `agents/<agent>/README.md`
+- `agents/<agent>/tools.md`
+- `agents/<agent>/memory.md`
 - `modules/README.md`
 - `modules/<module>/README.md`
 - `modules/<module>/<module>.md`
@@ -179,8 +190,10 @@ Generation is not considered complete until the context is reviewed.
 The review workflow is intentionally Git-first:
 
 1. Inspect Git diff/tree or the sync output first.
-2. Spot-check only the changed modules when diff-only review is safe.
+2. Route through the task-matched agent, then spot-check only the changed modules when diff-only review is safe.
 3. Broaden to source-level review only when the context is new, ambiguous, or out of sync with the diff scope.
+
+After review, record the result through `--review-outcome` so the sync state is no longer left in `pending`.
 
 Review scope is reported as one of:
 
@@ -228,12 +241,12 @@ The scaffold produces a structure like this:
 
 ## Notes And Limits
 
-- Agent folders are scaffolded during init, but the sync script does not currently regenerate agent docs.
 - Git sync refuses to run on non-default branches or dirty worktrees.
 - Managed Git sources must expose `main` or `master` for analysis.
 - The tool does not auto-checkout or pull user-owned local checkouts. Managed Git sources under `<target-root>/sources/` may be fetched and fast-forwarded.
 - Incremental review depends on a trustworthy Git baseline.
 - If generated `AUTO` blocks are edited manually, sync will stop unless forced.
+- Generated AUTO content now includes file-and-line evidence samples, but it is still heuristic and should be validated during the mandatory review pass.
 
 ## Positioning
 
