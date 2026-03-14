@@ -14,7 +14,7 @@ The goal is to keep project context lightweight, navigable, and safe to update o
 - Scaffolds a project context workspace under `~/clawDir/team` by default.
 - Accepts either a local checkout (`--code-dir`) or a Git source (`--git-url`).
 - Infers module buckets such as `frontend`, `backend`, `qa`, `mobile`, `data`, `ops`, and `reviewer`.
-- Creates project-level docs, per-module docs, and per-agent folders.
+- Creates project-level docs, per-module docs, per-feature docs inside technical modules, and per-agent folders.
 - Fills agent docs (`agents.md`, per-agent `README.md`, `tools.md`, `memory.md`) during sync so sub-agents have real initialization context.
 - Uses Git-first incremental sync only from a clean checked-out default branch (`main` or `master`) when a valid prior sync state exists.
 - Falls back to full sync when the repo is non-Git, the module map changes, or the diff is too broad.
@@ -178,7 +178,9 @@ The sync currently updates generated `AUTO` blocks in:
 - `modules/README.md`
 - `modules/<module>/README.md`
 - `modules/<module>/<module>.md`
+- `modules/<module>/<feature>.md`
 - `references/entrypoints.md`
+- `references/feature-map.md`
 - `project_status.md`
 
 Manual content outside those blocks is preserved.
@@ -191,7 +193,8 @@ The review workflow is intentionally Git-first:
 
 1. Inspect Git diff/tree or the sync output first.
 2. Route through the task-matched agent, then spot-check only the changed modules when diff-only review is safe.
-3. Broaden to source-level review only when the context is new, ambiguous, or out of sync with the diff scope.
+3. Within a changed technical module, load the matching feature docs when stable business slices exist.
+4. Broaden to source-level review only when the context is new, ambiguous, or out of sync with the diff scope.
 
 After review, record the result through `--review-outcome` so the sync state is no longer left in `pending`.
 
@@ -232,9 +235,11 @@ The scaffold produces a structure like this:
         │   ├── README.md
         │   └── <module>/
         │       ├── README.md
-        │       └── <module>.md
+        │       ├── <module>.md
+        │       └── <feature>.md   # optional business-slice doc under a technical module
         ├── references/
-        │   └── entrypoints.md
+        │   ├── entrypoints.md
+        │   └── feature-map.md
         └── .context-sync/
             └── state.json
 ```
@@ -246,7 +251,8 @@ The scaffold produces a structure like this:
 - The tool does not auto-checkout or pull user-owned local checkouts. Managed Git sources under `<target-root>/sources/` may be fetched and fast-forwarded.
 - Incremental review depends on a trustworthy Git baseline.
 - If generated `AUTO` blocks are edited manually, sync will stop unless forced.
-- Generated AUTO content now includes file-and-line evidence samples, but it is still heuristic and should be validated during the mandatory review pass.
+- Generated AUTO content now includes file/symbol evidence samples (with line hints when available), but it is still heuristic and should be validated during the mandatory review pass.
+- Feature inference is also heuristic; if the repo does not expose stable business boundaries in its paths and filenames, the generated feature docs will be sparse until the user adds manual guidance.
 
 ## Positioning
 

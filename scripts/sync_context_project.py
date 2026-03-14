@@ -35,7 +35,7 @@ from init_context_project import infer_modules
 from source_resolver import ResolvedSource, SourceResolutionError, normalize_source_locator, resolve_code_source
 
 
-STATE_VERSION = 3
+STATE_VERSION = 4
 AUTO_BLOCK_PATTERN = r"<!-- BEGIN AUTO:{name} -->\n?(.*?)\n?<!-- END AUTO:{name} -->"
 AUTO_BEGIN = "<!-- BEGIN AUTO:{name} -->"
 AUTO_END = "<!-- END AUTO:{name} -->"
@@ -177,6 +177,47 @@ LINE_HINTS_BY_FILENAME = {
     "package.json": ('"scripts"', '"main"', '"exports"', '"bin"'),
     "pyproject.toml": ("[project.scripts]", "[tool.poetry.scripts]", "[project]"),
     "Cargo.toml": ("[package]", "[dependencies]"),
+}
+PYTHON_SYMBOL_PATTERNS = (
+    re.compile(r"^\s*(?:async\s+def|def|class)\s+([A-Za-z_]\w*)\b"),
+)
+JS_TS_SYMBOL_PATTERNS = (
+    re.compile(r"^\s*export\s+default\s+class\s+([A-Za-z_$][\w$]*)\b"),
+    re.compile(r"^\s*(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)\b"),
+    re.compile(r"^\s*export\s+default\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\b"),
+    re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\("),
+    re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>"),
+    re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*="),
+    re.compile(r"^\s*(?:export\s+)?(?:type|interface|enum)\s+([A-Za-z_$][\w$]*)\b"),
+)
+GO_SYMBOL_PATTERNS = (
+    re.compile(r"^\s*func\s+(?:\([^)]+\)\s*)?([A-Za-z_]\w*)\s*\("),
+)
+RUST_SYMBOL_PATTERNS = (
+    re.compile(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)\s*\("),
+)
+RUBY_SYMBOL_PATTERNS = (
+    re.compile(r"^\s*(?:def|class|module)\s+([A-Za-z_]\w*[!?=]?)\b"),
+)
+GENERIC_CLASS_SYMBOL_PATTERNS = (
+    re.compile(r"^\s*(?:public|private|protected|internal|final|sealed|abstract|static|open|data|suspend|override|\s)*(?:class|interface|enum|record|struct|object)\s+([A-Za-z_]\w*)\b"),
+)
+SYMBOL_PATTERNS_BY_SUFFIX = {
+    ".py": PYTHON_SYMBOL_PATTERNS,
+    ".js": JS_TS_SYMBOL_PATTERNS,
+    ".jsx": JS_TS_SYMBOL_PATTERNS,
+    ".ts": JS_TS_SYMBOL_PATTERNS,
+    ".tsx": JS_TS_SYMBOL_PATTERNS,
+    ".mjs": JS_TS_SYMBOL_PATTERNS,
+    ".cjs": JS_TS_SYMBOL_PATTERNS,
+    ".go": GO_SYMBOL_PATTERNS,
+    ".rs": RUST_SYMBOL_PATTERNS,
+    ".rb": RUBY_SYMBOL_PATTERNS,
+    ".java": GENERIC_CLASS_SYMBOL_PATTERNS,
+    ".kt": GENERIC_CLASS_SYMBOL_PATTERNS,
+    ".kts": GENERIC_CLASS_SYMBOL_PATTERNS,
+    ".cs": GENERIC_CLASS_SYMBOL_PATTERNS,
+    ".swift": GENERIC_CLASS_SYMBOL_PATTERNS,
 }
 
 
@@ -538,6 +579,16 @@ def resolve_agent_targets(mode: SyncMode, modules: list[str]) -> list[str]:
     return resolve_module_targets(mode, modules)
 
 
+def module_feature_targets(
+    module_targets: list[str],
+    feature_map: dict[str, dict[str, list[str]]],
+) -> dict[str, list[str]]:
+    targets: dict[str, list[str]] = {}
+    for module in module_targets:
+        targets[module] = sorted(feature_map.get(module, {}).keys())
+    return targets
+
+
 def is_entrypoint_sensitive_path(relative_path: str) -> bool:
     return PurePosixPath(relative_path).name in ENTRYPOINT_SENSITIVE_FILE_NAMES
 
@@ -561,6 +612,7 @@ def expected_generated_targets(
     project_root: Path,
     module_targets: list[str],
     agent_targets: list[str],
+    feature_targets: dict[str, list[str]],
     include_global: bool,
 ) -> list[tuple[Path, str]]:
     targets: list[tuple[Path, str]] = []
@@ -569,6 +621,7 @@ def expected_generated_targets(
             [
                 (layout.skill_path(project_root), "l1"),
                 (layout.entrypoints_path(project_root), "entrypoints"),
+                (layout.feature_map_path(project_root), "feature-map"),
                 (layout.modules_index_path(project_root), "module-index"),
                 (layout.agents_index_path(project_root), "agent-index"),
             ]
@@ -588,6 +641,8 @@ def expected_generated_targets(
                 (layout.module_detail_path(project_root, module), "module-detail"),
             ]
         )
+        for feature in feature_targets.get(module, []):
+            targets.append((layout.module_feature_path(project_root, module, feature), "feature-detail"))
     targets.append((layout.project_status_path(project_root), "sync-status"))
     return targets
 
@@ -596,10 +651,11 @@ def detect_context_scope_mismatch(
     project_root: Path,
     module_targets: list[str],
     agent_targets: list[str],
+    feature_targets: dict[str, list[str]],
     include_global: bool,
 ) -> list[str]:
     missing: list[str] = []
-    for file_path, block_name in expected_generated_targets(project_root, module_targets, agent_targets, include_global):
+    for file_path, block_name in expected_generated_targets(project_root, module_targets, agent_targets, feature_targets, include_global):
         relative_doc_path = file_path.relative_to(project_root).as_posix()
         if not file_path.exists():
             missing.append(f"{relative_doc_path} [{block_name}]")
@@ -679,25 +735,60 @@ def limited_paths(paths: list[str], limit: int = MAX_LISTED_ITEMS) -> list[str]:
     return paths[:limit] + [f"... and {remaining} more"]
 
 
+def first_meaningful_line_from_lines(file_path: Path, lines: list[str]) -> int | None:
+    for hint in LINE_HINTS_BY_FILENAME.get(file_path.name, ()):
+        for line_number, line in enumerate(lines, start=1):
+            if hint in line:
+                return line_number
+    for line_number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped in {"{", "}", "[", "]", "(", ")"}:
+            continue
+        if stripped.startswith(("#", "//", "/*", "*", "--", ";", "<!--")):
+            continue
+        return line_number
+    return 1 if file_path.exists() else None
+
+
 def first_meaningful_line(file_path: Path) -> int | None:
     try:
         lines = file_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-        for hint in LINE_HINTS_BY_FILENAME.get(file_path.name, ()):
-            for line_number, line in enumerate(lines, start=1):
-                if hint in line:
-                    return line_number
-        for line_number, line in enumerate(lines, start=1):
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if stripped in {"{", "}", "[", "]", "(", ")"}:
-                continue
-            if stripped.startswith(("#", "//", "/*", "*", "--", ";", "<!--")):
-                continue
-            return line_number
     except OSError:
         return None
-    return 1 if file_path.exists() else None
+    return first_meaningful_line_from_lines(file_path, lines)
+
+
+def normalize_symbol_token(value: str) -> str | None:
+    token = value.strip().strip("'\"`[](){}")
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "-", token).strip("-")
+    return token or None
+
+
+def first_symbol_anchor(file_path: Path, lines: list[str]) -> tuple[str, int] | None:
+    patterns = SYMBOL_PATTERNS_BY_SUFFIX.get(file_path.suffix.lower(), ())
+    for line_number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("#", "//", "/*", "*", "--", ";", "<!--")):
+            continue
+        for pattern in patterns:
+            match = pattern.search(line)
+            if not match:
+                continue
+            symbol = normalize_symbol_token(match.group(1))
+            if symbol:
+                return symbol, line_number
+    for hint in LINE_HINTS_BY_FILENAME.get(file_path.name, ()):
+        for line_number, line in enumerate(lines, start=1):
+            if hint not in line:
+                continue
+            symbol = normalize_symbol_token(hint)
+            if symbol:
+                return symbol, line_number
+    return None
 
 
 def first_evidence_file(path: Path) -> Path | None:
@@ -710,7 +801,11 @@ def first_evidence_file(path: Path) -> Path | None:
     return None
 
 
-def format_line_ref(relative_path: str, line_number: int | None) -> str:
+def format_line_ref(relative_path: str, symbol: str | None, line_number: int | None) -> str:
+    if symbol and line_number:
+        return f"`{relative_path}#{symbol}:{line_number}`"
+    if symbol:
+        return f"`{relative_path}#{symbol}`"
     if line_number:
         return f"`{relative_path}:{line_number}`"
     return f"`{relative_path}`"
@@ -720,14 +815,157 @@ def path_line_ref(code_dir: Path, relative_path: str) -> str:
     candidate = code_dir / relative_path
     evidence_file = first_evidence_file(candidate)
     if not evidence_file:
-        return format_line_ref(relative_path, None)
+        return format_line_ref(relative_path, None, None)
     relative = evidence_file.relative_to(code_dir).as_posix()
-    return format_line_ref(relative, first_meaningful_line(evidence_file))
+    try:
+        lines = evidence_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return format_line_ref(relative, None, None)
+    symbol_anchor = first_symbol_anchor(evidence_file, lines)
+    if symbol_anchor:
+        symbol, line_number = symbol_anchor
+        return format_line_ref(relative, symbol, line_number)
+    return format_line_ref(relative, None, first_meaningful_line_from_lines(evidence_file, lines))
 
 
 def line_refs_for_paths(code_dir: Path, paths: list[str], limit: int = MAX_LISTED_ITEMS) -> list[str]:
     refs = [path_line_ref(code_dir, path) for path in paths]
     return limited_paths(list(dict.fromkeys(refs)), limit)
+
+
+def normalize_feature_token(value: str) -> str:
+    token = value.lower()
+    if "." in token:
+        token = token.rsplit(".", 1)[0]
+    token = re.sub(r"[_\s/]+", "-", token)
+    token = re.sub(r"[^a-z0-9-]+", "-", token)
+    token = re.sub(r"-{2,}", "-", token).strip("-")
+    return token
+
+
+def module_scoped_files(code_dir: Path, module_paths: list[str]) -> list[str]:
+    matches: list[str] = []
+    for root in module_paths:
+        candidate = code_dir / root
+        if candidate.is_file():
+            matches.append(root)
+            continue
+        if not candidate.exists():
+            continue
+        for file_path in walk_files(candidate):
+            matches.append(file_path.relative_to(code_dir).as_posix())
+    return sorted(dict.fromkeys(matches))
+
+
+def relative_within_module_root(relative_path: str, module_paths: list[str]) -> str:
+    rel = PurePosixPath(relative_path)
+    for root in sorted(module_paths, key=len, reverse=True):
+        root_path = PurePosixPath(root)
+        try:
+            return rel.relative_to(root_path).as_posix()
+        except ValueError:
+            continue
+    return relative_path
+
+
+def feature_candidate_for_path(relative_path: str, module: str) -> str | None:
+    path = PurePosixPath(relative_path)
+    segment_candidates = [normalize_feature_token(part) for part in path.parts[:-1]]
+    segment_candidates = [part for part in segment_candidates if part]
+
+    if not segment_candidates:
+        return None
+
+    root_container_segments = {"src", "app", "apps", "service", "services", "api"}
+    generic_technical_segments = {
+        "shared",
+        "common",
+        "core",
+        "lib",
+        "libs",
+        "utils",
+        "util",
+        "components",
+        "pages",
+        "views",
+        "hooks",
+        "store",
+        "stores",
+        "types",
+        "models",
+        "entities",
+        "dto",
+        "contracts",
+        "services",
+        "controllers",
+        "routes",
+    }
+
+    while segment_candidates and segment_candidates[0] in root_container_segments:
+        segment_candidates = segment_candidates[1:]
+    if not segment_candidates:
+        return None
+
+    candidate = ""
+    for segment in segment_candidates:
+        if segment in generic_technical_segments:
+            continue
+        candidate = segment
+        break
+    if not candidate:
+        return None
+
+    if candidate in {module, f"{module}s", "test", "tests", "__tests__", "spec", "specs", "index", "main"}:
+        return None
+    return candidate
+
+
+def discover_module_features(code_dir: Path, module: str, module_paths: list[str]) -> dict[str, list[str]]:
+    scoped_files = module_scoped_files(code_dir, module_paths)
+    if not scoped_files:
+        return {}
+
+    grouped: dict[str, list[str]] = {}
+    for relative_path in scoped_files:
+        local_path = relative_within_module_root(relative_path, module_paths)
+        candidate = feature_candidate_for_path(local_path, module)
+        if not candidate:
+            continue
+        grouped.setdefault(candidate, []).append(relative_path)
+
+    feature_map: dict[str, list[str]] = {}
+    ranked = sorted(grouped.items(), key=lambda item: (-len(set(item[1])), item[0]))
+    for feature, paths in ranked:
+        unique_paths = sorted(dict.fromkeys(paths))
+        feature_map[feature] = unique_paths[:MAX_DISCOVERED_FILES]
+        if len(feature_map) >= MAX_LISTED_ITEMS:
+            break
+    return feature_map
+
+
+def discover_feature_map(code_dir: Path, module_map: dict[str, list[str]]) -> dict[str, dict[str, list[str]]]:
+    feature_map: dict[str, dict[str, list[str]]] = {}
+    for module, module_paths in sorted(module_map.items()):
+        if module == "reviewer":
+            continue
+        feature_map[module] = discover_module_features(code_dir, module, module_paths)
+    return feature_map
+
+
+def feature_key_signature(value: object) -> dict[str, tuple[str, ...]]:
+    if not isinstance(value, dict):
+        return {}
+    signature: dict[str, tuple[str, ...]] = {}
+    for raw_module, raw_features in value.items():
+        module = str(raw_module).strip()
+        if not module:
+            continue
+        if isinstance(raw_features, dict):
+            features = tuple(sorted({str(raw_feature).strip() for raw_feature in raw_features if str(raw_feature).strip()}))
+        else:
+            features = ()
+        signature[module] = features
+    return dict(sorted(signature.items()))
 
 
 def format_list(items: list[str], empty_message: str, *, quote: bool = True) -> list[str]:
@@ -923,6 +1161,22 @@ def module_line_refs(code_dir: Path, module_paths: list[str]) -> list[str]:
     return line_refs_for_paths(code_dir, module_paths)
 
 
+def feature_title(feature: str) -> str:
+    return feature.replace("-", " ").replace("_", " ").title()
+
+
+def feature_line_refs(code_dir: Path, feature_paths: list[str]) -> list[str]:
+    return line_refs_for_paths(code_dir, feature_paths)
+
+
+def shared_feature_modules(feature_map: dict[str, dict[str, list[str]]]) -> dict[str, list[str]]:
+    shared: dict[str, list[str]] = {}
+    for module, module_features in sorted(feature_map.items()):
+        for feature in sorted(module_features):
+            shared.setdefault(feature, []).append(module)
+    return shared
+
+
 def build_manifest_refs(code_dir: Path) -> list[str]:
     manifests = [
         name
@@ -967,7 +1221,7 @@ def agent_role(agent: str) -> str:
 def agent_principles(agent: str) -> list[str]:
     principles = [
         "Start from the agent scope before loading deeper module detail.",
-        "Support important claims with file-and-line evidence from the current code snapshot.",
+        "Support important claims with file/symbol evidence (line hints when available) from the current code snapshot.",
         "Escalate to broader review when entrypoints, boundaries, or diff-to-context mapping are ambiguous.",
     ]
     if agent == "reviewer":
@@ -1025,11 +1279,11 @@ def generate_agent_readme_block(agent: str, code_dir: Path, module_map: dict[str
         *[f"- {item}" for item in agent_deliverables(agent)],
         "",
         "## Working Style",
-        f"- Start with `{layout.AGENT_README_FILENAME}`, load `{layout.AGENT_TOOLS_FILENAME}` and `{layout.AGENT_MEMORY_FILENAME}` only when needed, then move into the module docs.",
+        f"- Start with `{layout.AGENT_README_FILENAME}`, load `{layout.AGENT_TOOLS_FILENAME}` and `{layout.AGENT_MEMORY_FILENAME}` only when needed, then move into the module docs and any matching feature docs.",
         "- Keep the review scoped to the mapped module roots unless the diff or evidence says that is unsafe.",
         "",
         "## Scope Evidence",
-        *format_list(evidence_refs, "No representative line-level evidence was discovered automatically.", quote=False),
+        *format_list(evidence_refs, "No representative symbol-level evidence was discovered automatically.", quote=False),
         "",
         "## Directory Guide",
         f"- `{layout.AGENT_TOOLS_FILENAME}`: commands, entrypoints, and practical inspection starting points.",
@@ -1101,6 +1355,7 @@ def generate_skill_block(
     code_dir: Path,
     modules: list[str],
     module_map: dict[str, list[str]],
+    feature_map: dict[str, dict[str, list[str]]],
     global_paths: list[str],
     mode: SyncMode,
     manifests: list[str],
@@ -1182,9 +1437,16 @@ def generate_skill_block(
         if module == "reviewer":
             lines.append("- `reviewer`: cross-cutting risk review and quality gates.")
             continue
+        feature_names = sorted(feature_map.get(module, {}).keys())
+        feature_text = ""
+        if feature_names:
+            feature_text = (
+                " Feature docs: "
+                + ", ".join(f"`{layout.relative_module_feature(module, feature)}`" for feature in feature_names[:4])
+            )
         lines.append(
             f"- `{module}`: load `{layout.relative_module_overview(module)}` first, "
-            f"then `{layout.relative_module_detail(module)}`."
+            f"then `{layout.relative_module_detail(module)}`.{feature_text}"
         )
 
     lines.extend(
@@ -1194,8 +1456,8 @@ def generate_skill_block(
             f"- L1: `{layout.SKILL_FILENAME}` for global overview, routing rules, loading order, and runtime notes.",
             f"- L2: `{layout.AGENTS_DIRNAME}/` and module overview files such as "
             f"`{layout.MODULES_DIRNAME}/<module>/{layout.MODULE_OVERVIEW_FILENAME}`.",
-            f"- L3: module detail files such as `{layout.MODULES_DIRNAME}/<module>/<module>.md` "
-            f"and detailed `{layout.REFERENCES_DIRNAME}/` docs.",
+            f"- L3: module detail files such as `{layout.MODULES_DIRNAME}/<module>/<module>.md`, "
+            f"feature files such as `{layout.MODULES_DIRNAME}/<module>/<feature>.md`, and detailed `{layout.REFERENCES_DIRNAME}/` docs.",
             "",
             "### Preferred Load Order",
             f"- Load `{layout.SKILL_FILENAME}` first.",
@@ -1203,6 +1465,7 @@ def generate_skill_block(
             "- Let that agent choose which module to inspect.",
             f"- Load `{layout.MODULES_DIRNAME}/<module>/{layout.MODULE_OVERVIEW_FILENAME}` before "
             f"`{layout.MODULES_DIRNAME}/<module>/<module>.md`.",
+            f"- If the module has stable business features, load `{layout.MODULES_DIRNAME}/<module>/<feature>.md` after the module index.",
             f"- Load `{layout.REFERENCES_DIRNAME}/` only for evidence-level checks.",
             "",
             "## Spec-Driven Development",
@@ -1214,7 +1477,28 @@ def generate_skill_block(
     return "\n".join(lines)
 
 
-def generate_modules_index_block(modules: list[str], module_map: dict[str, list[str]]) -> str:
+def generate_feature_map_block(feature_map: dict[str, dict[str, list[str]]]) -> str:
+    lines = [
+        "## Generated Feature Map",
+        "- Shared business features grouped by technical module.",
+    ]
+    shared = shared_feature_modules(feature_map)
+    if not shared:
+        lines.append("- No stable feature-level docs were inferred automatically.")
+        return "\n".join(lines)
+
+    for feature, modules in sorted(shared.items()):
+        lines.append(f"- `{feature}`")
+        for module in modules:
+            lines.append(f"  - `{module}` -> `{layout.relative_module_feature(module, feature)}`")
+    return "\n".join(lines)
+
+
+def generate_modules_index_block(
+    modules: list[str],
+    module_map: dict[str, list[str]],
+    feature_map: dict[str, dict[str, list[str]]],
+) -> str:
     lines = [
         "## Generated Module Index",
         "- Load the module README before the detailed module note.",
@@ -1224,28 +1508,51 @@ def generate_modules_index_block(modules: list[str], module_map: dict[str, list[
         if module == "reviewer":
             lines.append("- `reviewer`: review-only module; does not map to a single code path.")
             continue
+        feature_names = sorted(feature_map.get(module, {}).keys())
+        feature_text = ""
+        if feature_names:
+            feature_text = " Feature docs: " + ", ".join(f"`{feature}`" for feature in feature_names[:4]) + "."
         if mapped_paths:
-            lines.append(f"- `{module}`: covers {', '.join(f'`{path}`' for path in limited_paths(mapped_paths))}.")
+            lines.append(
+                f"- `{module}`: covers {', '.join(f'`{path}`' for path in limited_paths(mapped_paths))}.{feature_text}"
+            )
         else:
-            lines.append(f"- `{module}`: no stable path mapping inferred yet.")
+            lines.append(f"- `{module}`: no stable path mapping inferred yet.{feature_text}")
     return "\n".join(lines)
 
 
-def generate_module_overview_block(module: str, code_dir: Path, module_paths: list[str]) -> str:
+def generate_module_overview_block(
+    module: str,
+    code_dir: Path,
+    module_paths: list[str],
+    module_features: dict[str, list[str]],
+) -> str:
     key_files = limited_paths(module_line_refs(code_dir, module_paths))
     tasks = module_tasks(module)
     lines = [
         "## Generated Overview",
         f"- Responsibility: {module_responsibility(module)}",
-        "- Key areas/files with line evidence:",
-        *format_list(key_files, "No concrete line-level evidence discovered yet.", quote=False),
+        "- Key areas/files with symbol evidence (line hint when available):",
+        *format_list(key_files, "No concrete symbol-level evidence discovered yet.", quote=False),
+        "- Functional subdomains:",
+        *format_list(
+            [f"`{feature}` -> `{layout.relative_module_feature(module, feature)}`" for feature in sorted(module_features)],
+            "No stable feature docs inferred for this module yet.",
+            quote=False,
+        ),
         "- Typical tasks:",
         *[f"- {task}" for task in tasks],
     ]
     return "\n".join(lines)
 
 
-def generate_module_detail_block(module: str, code_dir: Path, module_paths: list[str], module_map: dict[str, list[str]]) -> str:
+def generate_module_detail_block(
+    module: str,
+    code_dir: Path,
+    module_paths: list[str],
+    module_map: dict[str, list[str]],
+    module_features: dict[str, list[str]],
+) -> str:
     key_files = limited_paths(module_line_refs(code_dir, module_paths))
     entrypoints = limited_paths(line_refs_for_paths(code_dir, module_entrypoints(code_dir, module_paths)))
     tests = limited_paths(line_refs_for_paths(code_dir, module_test_paths(code_dir, module_paths)))
@@ -1259,10 +1566,17 @@ def generate_module_detail_block(module: str, code_dir: Path, module_paths: list
         "### Scope Evidence",
         f"- Covers: {', '.join(f'`{path}`' for path in module_paths) if module_paths else 'No stable path mapping inferred yet.'}",
         "",
+        "### Functional Subdomains",
+        *format_list(
+            [f"`{feature}` -> `{layout.relative_module_feature(module, feature)}`" for feature in sorted(module_features)],
+            "No stable business subdomains were inferred automatically for this module.",
+            quote=False,
+        ),
+        "",
         "### Responsibility Evidence",
         f"- {module_responsibility(module)}",
-        "- Key files with line evidence:",
-        *format_list(key_files, "No representative line-level evidence discovered automatically.", quote=False),
+        "- Key files with symbol evidence (line hint when available):",
+        *format_list(key_files, "No representative symbol-level evidence discovered automatically.", quote=False),
         "",
         "### Dependency Evidence",
     ]
@@ -1274,13 +1588,53 @@ def generate_module_detail_block(module: str, code_dir: Path, module_paths: list
         [
             "",
             "### Flow Entrypoints",
-            "- Candidate entrypoints with line evidence:",
+            "- Candidate entrypoints with symbol evidence (line hint when available):",
             *format_list(entrypoints, "No common entrypoint line references discovered inside this module.", quote=False),
             "",
             "### Testing Hooks",
             *format_list(tests, "No module-local test evidence discovered automatically.", quote=False),
         ]
     )
+    return "\n".join(lines)
+
+
+def generate_feature_detail_block(
+    module: str,
+    feature: str,
+    code_dir: Path,
+    feature_paths: list[str],
+) -> str:
+    line_refs = limited_paths(feature_line_refs(code_dir, feature_paths))
+    entrypoints = limited_paths(
+        line_refs_for_paths(
+            code_dir,
+            [path for path in feature_paths if is_entrypoint_sensitive_path(path) or PurePosixPath(path).name in ENTRYPOINT_FILE_NAMES],
+        )
+    )
+    tests = limited_paths(
+        line_refs_for_paths(
+            code_dir,
+            [path for path in feature_paths if any(token in path.lower() for token in ("test", "spec", "__tests__", "playwright", "cypress"))],
+        )
+    )
+    lines = [
+        f"## Generated {feature_title(feature)} Snapshot",
+        f"- Parent module: `{module}`",
+        "- Content inside this AUTO block is managed by `scripts/sync_context_project.py`.",
+        "",
+        "### Scope",
+        *format_list(line_refs, "No representative symbol-level evidence discovered automatically for this feature.", quote=False),
+        "",
+        "### Responsibilities",
+        f"- Captures the `{feature}` business slice inside the `{module}` technical module.",
+        "- Add manual notes outside this AUTO block if the feature needs richer domain context.",
+        "",
+        "### Entrypoints",
+        *format_list(entrypoints, "No obvious entrypoints were inferred automatically for this feature.", quote=False),
+        "",
+        "### Testing Hooks",
+        *format_list(tests, "No feature-local tests were inferred automatically.", quote=False),
+    ]
     return "\n".join(lines)
 
 
@@ -1370,6 +1724,7 @@ def build_updates(
     code_dir: Path,
     modules: list[str],
     module_map: dict[str, list[str]],
+    feature_map: dict[str, dict[str, list[str]]],
     global_paths: list[str],
     mode: SyncMode,
     manifests: list[str],
@@ -1386,7 +1741,7 @@ def build_updates(
             (
                 layout.skill_path(project_root),
                 "l1",
-                generate_skill_block(project, code_dir, modules, module_map, global_paths, mode, manifests, repo_root, branch, head),
+                generate_skill_block(project, code_dir, modules, module_map, feature_map, global_paths, mode, manifests, repo_root, branch, head),
             )
         )
         updates.append(
@@ -1398,9 +1753,16 @@ def build_updates(
         )
         updates.append(
             (
+                layout.feature_map_path(project_root),
+                "feature-map",
+                generate_feature_map_block(feature_map),
+            )
+        )
+        updates.append(
+            (
                 layout.modules_index_path(project_root),
                 "module-index",
-                generate_modules_index_block(modules, module_map),
+                generate_modules_index_block(modules, module_map, feature_map),
             )
         )
         updates.append(
@@ -1413,6 +1775,7 @@ def build_updates(
 
     module_targets = resolve_module_targets(mode, modules)
     agent_targets = resolve_agent_targets(mode, modules)
+    feature_targets = module_feature_targets(module_targets, feature_map)
 
     for agent in agent_targets:
         updates.append(
@@ -1439,20 +1802,29 @@ def build_updates(
 
     for module in module_targets:
         module_paths = module_map.get(module, [])
+        module_features = feature_map.get(module, {})
         updates.append(
             (
                 layout.module_overview_path(project_root, module),
                 "module-overview",
-                generate_module_overview_block(module, code_dir, module_paths),
+                generate_module_overview_block(module, code_dir, module_paths, module_features),
             )
         )
         updates.append(
             (
                 layout.module_detail_path(project_root, module),
                 "module-detail",
-                generate_module_detail_block(module, code_dir, module_paths, module_map),
+                generate_module_detail_block(module, code_dir, module_paths, module_map, module_features),
             )
         )
+        for feature in feature_targets.get(module, []):
+            updates.append(
+                (
+                    layout.module_feature_path(project_root, module, feature),
+                    "feature-detail",
+                    generate_feature_detail_block(module, feature, code_dir, module_features.get(feature, [])),
+                )
+            )
 
     updates.append(
         (
@@ -1479,6 +1851,7 @@ def determine_sync_mode(
     git_repo_root: Path | None,
     current_state: dict,
     module_map: dict[str, list[str]],
+    feature_map: dict[str, dict[str, list[str]]],
     changed_paths: list[str],
     changed_modules: list[str],
     update_global: bool,
@@ -1493,6 +1866,8 @@ def determine_sync_mode(
         return SyncMode("full", [], True, "Sync state version changed.")
     if current_state.get("module_map") != module_map:
         return SyncMode("full", [], True, "Module map changed since the last sync.")
+    if feature_key_signature(current_state.get("feature_map")) != feature_key_signature(feature_map):
+        return SyncMode("full", [], True, "Feature key set changed since the last sync.")
     if sync_base_issue:
         return SyncMode("full", [], True, sync_base_issue)
     if unmatched_changes:
@@ -1515,6 +1890,7 @@ def determine_review_plan(
     git_repo_root: Path | None,
     previous_state: dict,
     module_map: dict[str, list[str]],
+    feature_map: dict[str, dict[str, list[str]]],
     mode: SyncMode,
     changed_paths: list[str],
     changed_modules: list[str],
@@ -1561,6 +1937,14 @@ def determine_review_plan(
             changed_paths,
         )
 
+    if feature_key_signature(previous_state.get("feature_map")) != feature_key_signature(feature_map):
+        return ReviewPlan(
+            "broad-source-review",
+            "Feature key set changed since the last sync.",
+            sorted(changed_modules),
+            changed_paths,
+        )
+
     if sync_base_issue:
         return ReviewPlan(
             "broad-source-review",
@@ -1588,10 +1972,12 @@ def determine_review_plan(
 
     scoped_modules = sorted(changed_modules)
     scoped_agents = resolve_agent_targets(mode, scoped_modules)
+    scoped_features = module_feature_targets(scoped_modules, feature_map)
     scope_mismatch = detect_context_scope_mismatch(
         project_root,
         scoped_modules,
         scoped_agents,
+        scoped_features,
         mode.update_global or mode.name == "full",
     )
     if scope_mismatch:
@@ -1707,6 +2093,7 @@ def prepare_state(
     branch: str | None,
     source: ResolvedSource,
     module_map: dict[str, list[str]],
+    feature_map: dict[str, dict[str, list[str]]],
     global_paths: list[str],
     generated_hashes: dict[str, str],
     mode: SyncMode,
@@ -1735,6 +2122,7 @@ def prepare_state(
         "last_review_at": review_record.recorded_at,
         "last_review_head": review_record.reviewed_head,
         "module_map": module_map,
+        "feature_map": feature_map,
         "global_paths": global_paths,
         "generated_hashes": merged_hashes,
     }
@@ -1793,6 +2181,7 @@ def main() -> None:
 
     modules = infer_modules(code_dir)
     module_map, global_paths, _ = discover_module_map(code_dir, modules)
+    feature_map = discover_feature_map(code_dir, module_map)
     git_repo_root = is_git_repo(code_dir)
     validate_source_identity(previous_state, source, git_repo_root)
 
@@ -1818,6 +2207,7 @@ def main() -> None:
         git_repo_root,
         previous_state,
         module_map,
+        feature_map,
         changed_paths,
         changed_modules,
         update_global,
@@ -1834,6 +2224,7 @@ def main() -> None:
         git_repo_root,
         previous_state,
         module_map,
+        feature_map,
         mode,
         changed_paths,
         changed_modules,
@@ -1855,6 +2246,7 @@ def main() -> None:
         code_dir,
         modules,
         module_map,
+        feature_map,
         global_paths,
         mode if mode.name != "noop" else SyncMode("noop", [], False, mode.reason),
         manifests,
@@ -1897,6 +2289,7 @@ def main() -> None:
         branch,
         source,
         module_map,
+        feature_map,
         global_paths,
         generated_hashes,
         mode,

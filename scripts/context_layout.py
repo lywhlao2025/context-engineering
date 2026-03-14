@@ -32,6 +32,7 @@ MODULE_OVERVIEW_FILENAME = "README.md"
 
 REFERENCES_DIRNAME = "references"
 ENTRYPOINTS_FILENAME = "entrypoints.md"
+FEATURE_MAP_FILENAME = "feature-map.md"
 
 SOURCES_DIRNAME = "sources"
 
@@ -131,12 +132,24 @@ def module_detail_path(project_root: Path, module: str) -> Path:
     return module_dir(project_root, module) / module_detail_filename(module)
 
 
+def module_feature_filename(feature: str) -> str:
+    return f"{feature}.md"
+
+
+def module_feature_path(project_root: Path, module: str, feature: str) -> Path:
+    return module_dir(project_root, module) / module_feature_filename(feature)
+
+
 def references_dir(project_root: Path) -> Path:
     return project_root / REFERENCES_DIRNAME
 
 
 def entrypoints_path(project_root: Path) -> Path:
     return references_dir(project_root) / ENTRYPOINTS_FILENAME
+
+
+def feature_map_path(project_root: Path) -> Path:
+    return references_dir(project_root) / FEATURE_MAP_FILENAME
 
 
 def sources_dir(target_root: Path) -> Path:
@@ -165,3 +178,7 @@ def relative_module_overview(module: str) -> str:
 
 def relative_module_detail(module: str) -> str:
     return f"{MODULES_DIRNAME}/{module}/{module_detail_filename(module)}"
+
+
+def relative_module_feature(module: str, feature: str) -> str:
+    return f"{MODULES_DIRNAME}/{module}/{module_feature_filename(feature)}"

@@ -19,7 +19,7 @@ Use a two-stage model:
 
 - **L1**: Project `skill.md` — global overview, routing rules, loading order, and environment notes.
 - **L2**: `agents/` and module overview files such as `modules/<module>/README.md` — choose the task-matched agent first, then let that agent load the relevant module overview before going deeper.
-- **L3**: module detail files such as `modules/<module>/<module>.md` and detailed `references/*` — load these only after the agent has selected the relevant module scope.
+- **L3**: module detail files such as `modules/<module>/<module>.md`, feature files such as `modules/<module>/<feature>.md`, and detailed `references/*` — load these only after the agent has selected the relevant module scope.
 
 ### Preferred Load Order
 
@@ -28,7 +28,7 @@ Use a two-stage model:
 3. Load that agent's `README.md` first, then `tools.md` and `memory.md` if needed.
 4. Let the active agent choose which module to inspect.
 5. Load `modules/<module>/README.md` as the module overview layer.
-6. Load `modules/<module>/<module>.md` and `references/*` only when the agent needs module detail or evidence-level checks.
+6. Load `modules/<module>/<module>.md`, then the matching `modules/<module>/<feature>.md` files when stable business subdomains exist, then `references/*` for evidence-level checks.
 
 ## Workflow
 
@@ -54,6 +54,7 @@ Use a two-stage model:
        --target-root <target_root>
      ```
    - The script infers module buckets from the codebase and creates module folders dynamically.
+   - Treat the first layer under `modules/` as technical boundaries such as `frontend` or `backend`; use second-layer feature docs under those folders for stable business slices such as `new-sign` or `renewal`.
    - If `git_url` is used, the script clones the repo into `<target_root>/sources/<project_name>` and analyzes that managed checkout.
    - The script is idempotent: it won’t overwrite existing files.
 
@@ -75,6 +76,7 @@ Use a two-stage model:
    - If the sync state is missing, invalid, the previous sync head is not usable on the current default branch, or the module map changed, the sync falls back to a full refresh.
    - Once a project context exists, keep it bound to the same source. If the user wants to analyze a different repo, use a new `project_name`.
    - Sync only updates managed `AUTO` blocks. Manual notes outside those blocks are preserved.
+   - Sync may generate `modules/<module>/<feature>.md` when the module contains stable business subdomains, and it also refreshes `references/feature-map.md` to connect matching features across technical modules.
    - Sync also fills `agents/agents.md` plus each active agent's `README.md`, `tools.md`, and `memory.md`; agent docs must not stay as empty placeholders after generation.
    - If a managed `AUTO` block was edited manually after the last sync, the sync stops unless `--force-generated` is passed.
    - Record the review result with `--review-outcome` (`pending`, `pass`, `pass-with-findings`, `fail`) once the review pass is complete. Every sync with code changes resets the recorded outcome back to `pending` until a new review is recorded.
@@ -84,8 +86,9 @@ Use a two-stage model:
    - Fill `skill.md` (L1) with **project summary, architecture, agent routing, entrypoints, build/run, module navigation**.
    - Fill `agents/agents.md`, `agents/<agent>/README.md`, `agents/<agent>/tools.md`, and `agents/<agent>/memory.md` with non-placeholder content so the routed sub-agent can initialize with real project context.
    - Load the task-matched agent first, then fill `modules/<module>/README.md` (overview) and `modules/<module>/<module>.md` (detail) through that agent's scope.
-   - Fill `references/entrypoints.md` with code-level entrypoints and indexes.
-   - Important technical claims must come from line-level code inspection inside the chosen scope, not just file-name or folder-name inference.
+   - When a technical module contains stable business features, also fill `modules/<module>/<feature>.md` as second-layer feature docs.
+   - Fill `references/entrypoints.md` and `references/feature-map.md` with code-level indexes.
+   - Important technical claims must come from code-level inspection inside the chosen scope, with file/symbol evidence (line hints when available), not just file-name or folder-name inference.
    - Follow this review order strictly:
      1. Inspect Git diff/tree or the sync output first.
      2. Route to the relevant agent, then spot-check only the modules hit by the diff.

@@ -90,7 +90,7 @@ TEMPLATE_MODULES_README = """# Modules
 - Place analysis outputs here.
 - Suggested structure depends on tech stack.
 - Common buckets: {modules_dir}/backend/, {modules_dir}/frontend/, {modules_dir}/qa/, {modules_dir}/reviewer/
-- Each module folder can contain multiple detailed documents.
+- Each technical module folder can contain function-level docs such as `{modules_dir}/frontend/new-sign.md`.
 """
 
 
@@ -183,11 +183,22 @@ def main():
     write_if_missing(layout.agents_index_path(project_root), TEMPLATE_AGENTS)
     write_if_missing(layout.modules_index_path(project_root), TEMPLATE_MODULES_README.format(modules_dir=layout.MODULES_DIRNAME))
     write_if_missing(layout.entrypoints_path(project_root), "# Entrypoints\n\n- TODO: record key entrypoints and indices.\n")
+    write_if_missing(layout.feature_map_path(project_root), "# Feature Map\n\n- TODO: map shared business features across technical modules.\n")
 
     modules = infer_modules(code_dir)
     for module in modules:
         write_if_missing(layout.module_overview_path(project_root, module), f"# {module}\n")
-        write_if_missing(layout.module_detail_path(project_root, module), f"# {module} Module\n\n## Scope\n- TODO: define boundaries and ownership.\n\n## Key Responsibilities\n- TODO: list core responsibilities.\n\n## Important Notes\n- TODO: add critical constraints, gotchas, or decisions.\n\n## Interfaces & Dependencies\n- TODO: list internal/external dependencies and key interfaces.\n")
+        write_if_missing(
+            layout.module_detail_path(project_root, module),
+            (
+                f"# {module} Module\n\n"
+                "## Scope\n- TODO: define boundaries and ownership.\n\n"
+                "## Functional Subdomains\n- TODO: list feature-level docs such as `new-sign.md`, `renewal.md`, or `amendment.md` when they exist.\n\n"
+                "## Key Responsibilities\n- TODO: list core responsibilities.\n\n"
+                "## Important Notes\n- TODO: add critical constraints, gotchas, or decisions.\n\n"
+                "## Interfaces & Dependencies\n- TODO: list internal/external dependencies and key interfaces.\n"
+            ),
+        )
 
     # Create agent folders based on inferred modules + reviewer
     agent_names = sorted(set(modules + ["reviewer"]))

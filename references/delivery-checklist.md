@@ -6,6 +6,7 @@ Use this reference before finalizing a generated or synced project context.
 
 - L1 filled with accurate architecture and run/build info
 - Each module has README + `<module>.md`
+- Stable business slices are documented as `<feature>.md` files under the relevant technical module when they can be inferred safely
 - References contain concrete file paths
 - Loading paths cover UI/UX, core logic, QA, release scenarios
 - Agent folders exist with clear responsibilities
@@ -29,5 +30,7 @@ Use this reference before finalizing a generated or synced project context.
 - `<target_root>/projects/<project_name>/modules/README.md`
 - `<target_root>/projects/<project_name>/modules/<module>/README.md` (modules inferred from code)
 - `<target_root>/projects/<project_name>/modules/<module>/<module>.md`
+- `<target_root>/projects/<project_name>/modules/<module>/<feature>.md` (when stable business slices are inferred)
 - `<target_root>/projects/<project_name>/references/entrypoints.md`
+- `<target_root>/projects/<project_name>/references/feature-map.md`
 - `<target_root>/projects/<project_name>/.context-sync/state.json`

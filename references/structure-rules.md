@@ -11,14 +11,16 @@ Use this reference when you need the detailed project-context structure rules fo
   2. `agents/<agent>/tools.md` and `agents/<agent>/memory.md` when needed
   3. `modules/<module>/README.md`
   4. `modules/<module>/<module>.md`
-  5. `references/*` only for evidence-level checks
+  5. `modules/<module>/<feature>.md` when stable business slices exist
+  6. `references/*` only for evidence-level checks
 - Do not load all agents and modules eagerly. Prefer agent-first, task-scoped loading.
 
 ## Modules Directory Guidance
 
 - `modules/` is generated based on the target codebase (not fixed).
 - Recommended buckets: `frontend`, `backend`, `qa`, `reviewer` (only if inferred).
-- Each module may contain multiple detailed docs; keep an overview `modules/<module>/README.md` and a `modules/<module>/<module>.md` for detailed module notes.
+- Treat the first layer under `modules/` as technical/runtime boundaries.
+- Each module may contain multiple detailed docs; keep an overview `modules/<module>/README.md`, a module index/detail file `modules/<module>/<module>.md`, and when stable business slices exist, additional feature docs such as `modules/<module>/new-sign.md`.
 - If a domain is present (e.g., `mobile`, `data`, `ops`, `infra`), create that module.
 
 ## Generation Rules
@@ -27,7 +29,8 @@ Use this reference when you need the detailed project-context structure rules fo
 
 - Each module folder must include:
   - `modules/<module>/README.md` (overview)
-  - `modules/<module>/<module>.md` (details: Scope, Key Responsibilities, Important Notes, Interfaces & Dependencies)
+  - `modules/<module>/<module>.md` (details: Scope, Functional Subdomains, Key Responsibilities, Important Notes, Interfaces & Dependencies)
+- If stable business slices exist inside that technical module, generate `modules/<module>/<feature>.md` files for them.
 - If a module is large, split into multiple files (e.g., `A.md`, `B.md`, `C.md`). In that case, `<module>.md` becomes an index/summary that describes each sub-file and when to load it.
 
 ### Agents
