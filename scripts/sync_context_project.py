@@ -914,9 +914,19 @@ def generate_skill_block(
         [
             "",
             "## Progressive Loading Model",
-            f"- L1: `{layout.SKILL_FILENAME}` for global overview, architecture, and runtime notes.",
-            f"- L2: `{layout.MODULES_DIRNAME}/` and `{layout.AGENTS_DIRNAME}/` for task-scoped detail and role guidance.",
-            f"- L3: `{layout.REFERENCES_DIRNAME}/` for entrypoints, storage, i18n, and evidence-level docs.",
+            f"- L1: `{layout.SKILL_FILENAME}` for global overview, routing rules, loading order, and runtime notes.",
+            f"- L2: `{layout.AGENTS_DIRNAME}/` and module overview files such as "
+            f"`{layout.MODULES_DIRNAME}/<module>/{layout.MODULE_OVERVIEW_FILENAME}`.",
+            f"- L3: module detail files such as `{layout.MODULES_DIRNAME}/<module>/<module>.md` "
+            f"and detailed `{layout.REFERENCES_DIRNAME}/` docs.",
+            "",
+            "### Preferred Load Order",
+            f"- Load `{layout.SKILL_FILENAME}` first.",
+            f"- Route to the relevant agent under `{layout.AGENTS_DIRNAME}/<agent>/`.",
+            "- Let that agent choose which module to inspect.",
+            f"- Load `{layout.MODULES_DIRNAME}/<module>/{layout.MODULE_OVERVIEW_FILENAME}` before "
+            f"`{layout.MODULES_DIRNAME}/<module>/<module>.md`.",
+            f"- Load `{layout.REFERENCES_DIRNAME}/` only for evidence-level checks.",
             "",
             "## Spec-Driven Development",
             "- Keep spec-first changes outside this AUTO block if the project needs custom policy.",
