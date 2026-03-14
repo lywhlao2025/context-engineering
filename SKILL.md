@@ -43,6 +43,7 @@ Use a two-stage model:
    - Existing Git-backed context: start from Git diff/tree first; do **not** broad-read the source tree before you know the changed scope.
    - Read top-level docs such as `README*`, `docs/`, `tech.md`, `architecture.md`, `CHANGELOG*` when bootstrapping a project or when a broad review trigger fires.
    - Infer the available project agents and modules, then route the task to the best-fit agent before loading module docs.
+   - When inspecting source files, analyze code at the line level inside the selected scope. Do not infer behavior only from directory names, filenames, or headings.
 
 3. **Initialize the context structure**
    - Prefer running the bundled script:
@@ -81,6 +82,7 @@ Use a two-stage model:
    - Fill `skill.md` (L1) with **project summary, architecture, agent routing, entrypoints, build/run, module navigation**.
    - Load the task-matched agent first, then fill `modules/<module>/README.md` (overview) and `modules/<module>/<module>.md` (detail) through that agent's scope.
    - Fill `references/entrypoints.md` with code-level entrypoints and indexes.
+   - Important technical claims must come from line-level code inspection inside the chosen scope, not just file-name or folder-name inference.
    - Follow this review order strictly:
      1. Inspect Git diff/tree or the sync output first.
      2. Route to the relevant agent, then spot-check only the modules hit by the diff.
@@ -150,7 +152,7 @@ Use a two-stage model:
   - `pass`: context is accurate enough to hand off
   - `pass with findings`: mostly usable, but known issues are called out
   - `fail`: generated context is materially misleading and needs fixes before handoff
-- If the user explicitly asks for a review, present findings first with concrete file references.
+- If the user explicitly asks for a review, present findings first with concrete file and line references.
 
 ## Detailed References
 

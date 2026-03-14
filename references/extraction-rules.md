@@ -2,6 +2,11 @@
 
 Use this reference **only when you need detailed extraction guidance** for L1/L2/L3 docs.
 
+## Line-Level Rule
+
+- Analyze code at the line level inside the selected files. Do not stop at directory names, filenames, or headings.
+- When an important claim depends on implementation behavior, verify it by reading the relevant lines and cite file + line references in review findings when applicable.
+
 ## Review Scope Quick Reference
 
 - `git-diff-only`: read Git diff/tree first and limit source checks to diff-hit modules unless a mismatch is found.
