@@ -15,6 +15,8 @@ The goal is to keep project context lightweight, navigable, and safe to update o
 - Accepts either a local checkout (`--code-dir`) or a Git source (`--git-url`).
 - Infers module buckets such as `frontend`, `backend`, `qa`, `mobile`, `data`, `ops`, and `reviewer`.
 - Creates project-level docs, per-module docs, per-feature docs inside technical modules, and per-agent folders.
+- Generates code-derived module summaries that describe implementation structure first, then attach representative file/symbol references.
+- Generates code-derived feature summaries in `modules/<module>/<feature>.md` when stable business slices are inferred.
 - Fills agent docs (`agents.md`, per-agent `README.md`, `tools.md`, `memory.md`) during sync so sub-agents have real initialization context.
 - Builds a requirements trace map (`references/requirements-map.md`) from PRD docs under `references/prd.md`, `references/requirements.md`, or `references/prd/*.md`.
 - Builds a domain model snapshot (`references/domain-model.md`) with inferred entities, states, rules, and requirement links.
@@ -113,7 +115,7 @@ Behavior:
 - When `--git-url` is used, clones the repository into `<target-root>/sources/<project-name>` and analyzes that managed checkout.
 - Updates `projects/projects.md` with the new project entry.
 - Infers initial modules from the code tree.
-- Creates placeholder module docs and agent folders.
+- Creates lightweight scaffold docs and agent folders without leaving large placeholder TODO sections in module detail files.
 
 ### `sync_context_project.py`
 
@@ -257,7 +259,7 @@ The scaffold produces a structure like this:
 - The tool does not auto-checkout or pull user-owned local checkouts. Managed Git sources under `<target-root>/sources/` may be fetched and fast-forwarded.
 - Incremental review depends on a trustworthy Git baseline.
 - If generated `AUTO` blocks are edited manually, sync will stop unless forced.
-- Generated AUTO content now includes file/symbol evidence samples (with line hints when available), but it is still heuristic and should be validated during the mandatory review pass.
+- Generated module AUTO content now starts with code-derived summaries and still includes representative file/symbol references; it remains heuristic and should be validated during the mandatory review pass.
 - Feature inference is also heuristic; if the repo does not expose stable business boundaries in its paths and filenames, the generated feature docs will be sparse until the user adds manual guidance.
 - Requirement-to-code mapping is heuristic; keep PRD docs structured (clear requirement IDs and acceptance bullets) to improve matching quality.
 - Domain model inference is heuristic; review generated entities/states/rules before using them as architecture decisions.

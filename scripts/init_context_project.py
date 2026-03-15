@@ -212,8 +212,14 @@ def main():
     write_if_missing(layout.decisions_path(project_root), TEMPLATE_DECISIONS.format(date=date))
     write_if_missing(layout.agents_index_path(project_root), TEMPLATE_AGENTS)
     write_if_missing(layout.modules_index_path(project_root), TEMPLATE_MODULES_README.format(modules_dir=layout.MODULES_DIRNAME))
-    write_if_missing(layout.entrypoints_path(project_root), "# Entrypoints\n\n- TODO: record key entrypoints and indices.\n")
-    write_if_missing(layout.feature_map_path(project_root), "# Feature Map\n\n- TODO: map shared business features across technical modules.\n")
+    write_if_missing(
+        layout.entrypoints_path(project_root),
+        "# Entrypoints\n\n- Run sync to populate generated entrypoints and runtime/build indices.\n- Add durable manual notes outside AUTO blocks when needed.\n",
+    )
+    write_if_missing(
+        layout.feature_map_path(project_root),
+        "# Feature Map\n\n- Run sync to populate generated feature-to-module mappings.\n- Add durable manual notes outside AUTO blocks when business boundaries need clarification.\n",
+    )
     write_if_missing(
         layout.requirements_map_path(project_root),
         (
@@ -235,7 +241,7 @@ def main():
         (
             "# PRD\n\n"
             "## Requirements\n"
-            "- REQ-001: TODO describe one requirement with acceptance criteria.\n"
+            "- REQ-001: Describe one requirement with acceptance criteria.\n"
         ),
     )
 
@@ -255,11 +261,8 @@ def main():
             layout.module_detail_path(project_root, module),
             (
                 f"# {module} Module\n\n"
-                "## Scope\n- TODO: define boundaries and ownership.\n\n"
-                "## Functional Subdomains\n- TODO: list feature-level docs such as `new-sign.md`, `renewal.md`, or `amendment.md` when they exist.\n\n"
-                "## Key Responsibilities\n- TODO: list core responsibilities.\n\n"
-                "## Important Notes\n- TODO: add critical constraints, gotchas, or decisions.\n\n"
-                "## Interfaces & Dependencies\n- TODO: list internal/external dependencies and key interfaces.\n"
+                "- Sync populates a generated code summary below.\n"
+                "- Add durable manual notes outside the AUTO block when project-specific corrections or decisions are needed.\n"
             ),
         )
 

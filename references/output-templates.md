@@ -20,7 +20,8 @@ Use this reference when filling generated L1/L2/L3 context documents.
 ## L2 (`modules/<module>/README.md`)
 
 - Responsibilities
-- Key areas/files with file + symbol evidence (line hint when available)
+- Code-derived module summary (implementation structure, dominant areas, major responsibilities)
+- Representative files with file + symbol evidence (line hint when available)
 - Typical tasks
 - Keep generated content inside a managed `AUTO` block so manual notes can live around it.
 
@@ -31,15 +32,18 @@ Use this reference when filling generated L1/L2/L3 context documents.
 - Key Responsibilities
 - Important Notes (constraints, risks, decisions)
 - Interfaces & Dependencies
+- Code-derived implementation summary before detailed evidence lists
 - Key flows with file + symbol evidence (line hint when available) when applicable
 - Testing/QA hooks with file + symbol evidence (line hint when available) when applicable
-- If an AUTO block is present, it should act as a generated evidence supplement layer rather than repeating the same top-level section headings verbatim.
+- If an AUTO block is present, it should read like a usable module summary generated from code, with representative evidence attached where helpful.
 - Keep generated content inside a managed `AUTO` block so manual notes can live around it.
 
 ## L3 (`modules/<module>/<feature>.md`)
 
 - Feature scope inside the parent technical module
+- Code-derived feature summary (implementation structure, dominant responsibilities, key areas)
 - Responsibilities for that specific business slice
+- Representative files with file + symbol evidence (line hint when available)
 - Entrypoints with file + symbol evidence (line hint when available)
 - Testing hooks with file + symbol evidence (line hint when available)
 - Keep generated content inside a managed `AUTO` block so manual notes can live around it.

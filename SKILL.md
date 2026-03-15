@@ -87,8 +87,8 @@ Use a two-stage model:
 5. **Review and extend content (mandatory)**
    - Fill `skill.md` (L1) with **project summary, architecture, agent routing, entrypoints, build/run, module navigation**.
    - Fill `agents/agents.md`, `agents/<agent>/README.md`, `agents/<agent>/tools.md`, and `agents/<agent>/memory.md` with non-placeholder content so the routed sub-agent can initialize with real project context.
-   - Load the task-matched agent first, then fill `modules/<module>/README.md` (overview) and `modules/<module>/<module>.md` (detail) through that agent's scope.
-   - When a technical module contains stable business features, also fill `modules/<module>/<feature>.md` as second-layer feature docs.
+   - Load the task-matched agent first, then fill `modules/<module>/README.md` (overview) and `modules/<module>/<module>.md` (detail) through that agent's scope with code-derived summaries, not placeholder TODOs or path-only inventories.
+   - When a technical module contains stable business features, also fill `modules/<module>/<feature>.md` as second-layer feature docs with code-derived summaries and representative references.
    - Fill `references/entrypoints.md`, `references/feature-map.md`, and (when PRD docs exist) `references/requirements-map.md` with code-level indexes and requirement trace mapping.
    - Review `references/domain-model.md` and move durable corrections/clarifications to manual notes outside AUTO blocks when heuristics are incomplete.
    - Important technical claims must come from code-level inspection inside the chosen scope, with file/symbol evidence (line hints when available), not just file-name or folder-name inference.

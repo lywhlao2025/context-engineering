@@ -14,6 +14,7 @@ the sync aborts unless --force-generated is passed.
 from __future__ import annotations
 
 import argparse
+from collections import Counter, defaultdict
 import hashlib
 import json
 import math
@@ -275,6 +276,245 @@ MATCH_STOPWORDS = {
     "module",
     "modules",
 }
+ROOT_CONTAINER_SEGMENTS = {"src", "app", "apps", "service", "services", "api"}
+GENERIC_TECHNICAL_SEGMENTS = {
+    "shared",
+    "common",
+    "core",
+    "lib",
+    "libs",
+    "utils",
+    "util",
+    "components",
+    "pages",
+    "views",
+    "hooks",
+    "store",
+    "stores",
+    "types",
+    "models",
+    "entities",
+    "dto",
+    "contracts",
+    "services",
+    "controllers",
+    "routes",
+    "repository",
+    "repositories",
+    "locale",
+    "locales",
+    "translation",
+    "translations",
+}
+SUMMARY_AREA_CONTAINER_SEGMENTS = {
+    "src",
+    "app",
+    "apps",
+    "lib",
+    "libs",
+    "internal",
+    "client",
+    "server",
+    "web",
+    "ui",
+}
+LANGUAGE_NAMES = {
+    ".py": "Python",
+    ".js": "JavaScript",
+    ".jsx": "JavaScript/JSX",
+    ".ts": "TypeScript",
+    ".tsx": "TypeScript/TSX",
+    ".mjs": "JavaScript",
+    ".cjs": "JavaScript",
+    ".go": "Go",
+    ".rs": "Rust",
+    ".rb": "Ruby",
+    ".java": "Java",
+    ".kt": "Kotlin",
+    ".kts": "Kotlin",
+    ".cs": "C#",
+    ".swift": "Swift",
+    ".php": "PHP",
+    ".scala": "Scala",
+    ".sql": "SQL",
+    ".prisma": "Prisma",
+    ".graphql": "GraphQL",
+    ".gql": "GraphQL",
+    ".json": "JSON",
+    ".yml": "YAML",
+    ".yaml": "YAML",
+    ".toml": "TOML",
+    ".ini": "INI",
+    ".sh": "Shell",
+    ".bash": "Shell",
+    ".zsh": "Shell",
+    ".vue": "Vue",
+    ".svelte": "Svelte",
+}
+SUMMARY_TEXT_SUFFIXES = set(LANGUAGE_NAMES) | {
+    ".md",
+    ".txt",
+    ".env",
+    ".conf",
+    ".cfg",
+    ".properties",
+}
+SUMMARY_BINARY_SUFFIXES = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".ico",
+    ".svg",
+    ".pdf",
+    ".mp3",
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".otf",
+    ".lock",
+}
+MAX_SUMMARY_SCAN_FILES = 200
+MAX_SUMMARY_AREA_ITEMS = 4
+MAX_SUMMARY_CATEGORY_ITEMS = 4
+MAX_SUMMARY_REFS = 3
+MODULE_CATEGORY_KEYWORDS = {
+    "frontend": {
+        "pages": ("page", "pages", "screen", "screens", "view", "views", "route", "routes"),
+        "components": ("component", "components", "layout", "layouts", "widget", "widgets", "ui"),
+        "hooks": ("hook", "hooks", "composable", "composables"),
+        "state": ("store", "stores", "state", "redux", "zustand", "context", "contexts", "provider", "providers"),
+        "forms": ("form", "forms", "validation", "validator", "validators"),
+        "api": ("api", "client", "clients", "query", "queries", "mutation", "mutations", "service", "services", "graphql"),
+        "i18n": ("i18n", "locale", "locales", "translation", "translations"),
+        "styles": ("style", "styles", "theme", "themes", "css", "scss", "sass"),
+    },
+    "backend": {
+        "http": ("route", "routes", "router", "routers", "controller", "controllers", "handler", "handlers", "endpoint", "endpoints", "api"),
+        "service": ("service", "services", "usecase", "usecases", "use-case", "domain", "logic"),
+        "data": ("repo", "repository", "repositories", "dao", "model", "models", "schema", "schemas", "entity", "entities", "db", "database", "migration", "migrations", "sql", "prisma", "orm"),
+        "job": ("worker", "workers", "job", "jobs", "queue", "queues", "task", "tasks", "cron", "scheduler"),
+        "auth": ("auth", "oauth", "jwt", "session", "token", "permission", "permissions", "acl", "rbac"),
+        "integration": ("client", "clients", "gateway", "gateways", "adapter", "adapters", "sdk", "webhook", "webhooks", "integration", "integrations"),
+        "config": ("config", "configs", "setting", "settings", "env"),
+    },
+    "qa": {
+        "unit": ("test", "tests", "spec", "specs"),
+        "e2e": ("e2e", "playwright", "cypress"),
+        "fixtures": ("fixture", "fixtures", "mock", "mocks", "stub", "stubs"),
+    },
+    "mobile": {
+        "screens": ("screen", "screens", "view", "views", "page", "pages"),
+        "state": ("store", "stores", "state", "context", "contexts", "provider", "providers"),
+        "api": ("api", "client", "clients", "query", "queries", "mutation", "mutations", "service", "services"),
+        "device": ("push", "notification", "permissions", "camera", "location", "bluetooth"),
+        "styles": ("style", "styles", "theme", "themes"),
+    },
+    "data": {
+        "pipelines": ("pipeline", "pipelines", "etl", "job", "jobs", "workflow", "workflows"),
+        "models": ("model", "models", "feature", "features"),
+        "storage": ("warehouse", "lake", "dataset", "datasets", "schema", "schemas", "sql"),
+        "quality": ("test", "tests", "validation", "validator", "validators", "quality"),
+    },
+    "ops": {
+        "deploy": ("deploy", "deployment", "helm", "k8s", "kubernetes", "terraform", "docker", "compose"),
+        "runtime": ("env", "config", "configs", "secret", "secrets", "runtime"),
+        "ci": ("github", "actions", "ci", "workflow", "workflows", "pipeline", "pipelines"),
+        "observability": ("monitor", "monitoring", "metrics", "logging", "logs", "trace", "tracing", "alert"),
+    },
+}
+MODULE_CATEGORY_LABELS = {
+    "frontend": {
+        "pages": "User-facing flows and route-level screens",
+        "components": "Reusable UI components and layout primitives",
+        "hooks": "Stateful client-side hooks or composables",
+        "state": "Client state containers and shared UI state",
+        "forms": "Forms and validation logic",
+        "api": "Client-side API/query integration code",
+        "i18n": "Localization helpers and locale assets",
+        "styles": "Styling and theme layers",
+    },
+    "backend": {
+        "http": "HTTP/API entrypoints and request handlers",
+        "service": "Business logic and orchestration services",
+        "data": "Persistence, schema, and data access code",
+        "job": "Background jobs and async processing",
+        "auth": "Authentication and authorization code",
+        "integration": "External integrations and client adapters",
+        "config": "Runtime configuration and environment wiring",
+    },
+    "qa": {
+        "unit": "Unit and module-level verification paths",
+        "e2e": "End-to-end or browser-driven test flows",
+        "fixtures": "Fixtures, mocks, and test data helpers",
+    },
+    "mobile": {
+        "screens": "Screen-level user flows",
+        "state": "Shared state and lifecycle coordination",
+        "api": "Remote data access and sync code",
+        "device": "Device capability integrations",
+        "styles": "Styling and theme layers",
+    },
+    "data": {
+        "pipelines": "Pipelines and scheduled data movement",
+        "models": "Models and feature-engineering code",
+        "storage": "Schemas, datasets, and storage contracts",
+        "quality": "Data validation and quality checks",
+    },
+    "ops": {
+        "deploy": "Deployment and environment rollout logic",
+        "runtime": "Runtime configuration and secret management",
+        "ci": "CI/CD workflows and automation",
+        "observability": "Metrics, logging, and alerting setup",
+    },
+}
+MODULE_FRAMEWORK_PATTERNS = {
+    "frontend": {
+        "React": ("from 'react'", 'from "react"', "react-dom", "jsx", "tsx"),
+        "Next.js": ("next.config", "from 'next", 'from "next', "next/navigation", "next/server"),
+        "Vue": ("from 'vue'", 'from "vue"', "definecomponent(", "createapp("),
+        "Svelte": ("from 'svelte'", 'from "svelte"', ".svelte"),
+        "Redux": ("@reduxjs/toolkit", "redux", "createstore(", "configurestore("),
+    },
+    "backend": {
+        "Express": ("from 'express'", 'from "express"', "express()", "express.router("),
+        "FastAPI": ("from fastapi", "fastapi(", "@app.", "@router."),
+        "Django": ("django.", "urlpatterns", "rest_framework"),
+        "Flask": ("from flask", "flask(", "@app.route"),
+        "Spring": ("@restcontroller", "@controller", "@service", "@repository"),
+        "NestJS": ("@nestjs/", "@controller(", "@injectable("),
+        "Prisma": ("prisma", "schema.prisma"),
+        "SQLAlchemy": ("sqlalchemy", "declarative_base", "sessionmaker"),
+    },
+    "qa": {
+        "Playwright": ("playwright", "@playwright/test"),
+        "Cypress": ("cypress", "cy."),
+        "Jest": ("jest", "describe(", "test("),
+        "Pytest": ("pytest", "def test_"),
+    },
+    "mobile": {
+        "React Native": ("react-native", "@react-navigation"),
+        "SwiftUI": ("import swiftui", "struct ", "var body: some view"),
+        "Kotlin Android": ("androidx.", "compose", "@composable"),
+    },
+    "data": {
+        "dbt": ("dbt", "ref(", "source("),
+        "Airflow": ("airflow", "dag(", "@dag"),
+        "Spark": ("pyspark", "spark.", "sparksession"),
+        "Pandas": ("import pandas", "pd."),
+    },
+    "ops": {
+        "Docker": ("dockerfile", "docker-compose", "compose.yaml"),
+        "Terraform": ("terraform", "resource ", "provider "),
+        "Kubernetes": ("apiversion:", "kind:", "helm"),
+        "GitHub Actions": ("name:", "on:", "jobs:", ".github/workflows"),
+    },
+}
 DOMAIN_ENTITY_SKIP_TOKENS = {
     "src",
     "app",
@@ -343,6 +583,36 @@ class RequirementCandidate:
     title: str
     text: str
     prd_ref: str
+
+
+@dataclass
+class ModuleProfile:
+    total_files: int
+    inspected_files: int
+    languages: list[tuple[str, int]]
+    focus_areas: list[tuple[str, int]]
+    category_refs: dict[str, list[str]]
+    category_counts: dict[str, int]
+    frameworks: list[tuple[str, int]]
+    key_refs: list[str]
+    entrypoints: list[str]
+    tests: list[str]
+    area_refs: dict[str, list[str]]
+
+
+@dataclass
+class FeatureProfile:
+    total_files: int
+    inspected_files: int
+    languages: list[tuple[str, int]]
+    focus_areas: list[tuple[str, int]]
+    category_refs: dict[str, list[str]]
+    category_counts: dict[str, int]
+    frameworks: list[tuple[str, int]]
+    key_refs: list[str]
+    entrypoints: list[str]
+    tests: list[str]
+    area_refs: dict[str, list[str]]
 
 
 class SyncError(RuntimeError):
@@ -905,15 +1175,10 @@ def upsert_auto_block(text: str, block_name: str, content: str) -> str:
     end = AUTO_END.format(name=block_name)
     block = f"{begin}\n{content.rstrip()}\n{end}"
     pattern = auto_block_regex(block_name)
-    if pattern.search(text):
-        updated = pattern.sub(lambda _: block, text, count=1)
-    else:
-        trimmed = text.rstrip()
-        if trimmed:
-            updated = trimmed + "\n\n" + block + "\n"
-        else:
-            updated = block + "\n"
-    return updated
+    manual_text = pattern.sub("", text).strip()
+    if manual_text:
+        return f"{block}\n\n{manual_text}\n"
+    return block + "\n"
 
 
 def detect_auto_conflicts(project_root: Path, updates: list[tuple[Path, str, str]], stored_hashes: dict[str, str], force_generated: bool) -> list[str]:
@@ -1053,6 +1318,39 @@ def line_refs_for_paths(code_dir: Path, paths: list[str], limit: int = MAX_LISTE
     return limited_paths(list(dict.fromkeys(refs)), limit)
 
 
+def collect_symbol_anchors(file_path: Path, lines: list[str], limit: int = 3) -> list[tuple[str, int]]:
+    patterns = SYMBOL_PATTERNS_BY_SUFFIX.get(file_path.suffix.lower(), ())
+    anchors: list[tuple[str, int]] = []
+    seen: set[str] = set()
+    for line_number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("#", "//", "/*", "*", "--", ";", "<!--")):
+            continue
+        for pattern in patterns:
+            match = pattern.search(line)
+            if not match:
+                continue
+            symbol = normalize_symbol_token(match.group(1))
+            if not symbol or symbol in seen:
+                continue
+            anchors.append((symbol, line_number))
+            seen.add(symbol)
+            if len(anchors) >= limit:
+                return anchors
+    if anchors:
+        return anchors
+    for hint in LINE_HINTS_BY_FILENAME.get(file_path.name, ()):
+        for line_number, line in enumerate(lines, start=1):
+            if hint not in line:
+                continue
+            symbol = normalize_symbol_token(hint)
+            if symbol:
+                return [(symbol, line_number)]
+    return anchors
+
+
 def normalize_feature_token(value: str) -> str:
     token = value.lower()
     if "." in token:
@@ -1096,39 +1394,14 @@ def feature_candidate_for_path(relative_path: str, module: str) -> str | None:
     if not segment_candidates:
         return None
 
-    root_container_segments = {"src", "app", "apps", "service", "services", "api"}
-    generic_technical_segments = {
-        "shared",
-        "common",
-        "core",
-        "lib",
-        "libs",
-        "utils",
-        "util",
-        "components",
-        "pages",
-        "views",
-        "hooks",
-        "store",
-        "stores",
-        "types",
-        "models",
-        "entities",
-        "dto",
-        "contracts",
-        "services",
-        "controllers",
-        "routes",
-    }
-
-    while segment_candidates and segment_candidates[0] in root_container_segments:
+    while segment_candidates and segment_candidates[0] in ROOT_CONTAINER_SEGMENTS:
         segment_candidates = segment_candidates[1:]
     if not segment_candidates:
         return None
 
     candidate = ""
     for segment in segment_candidates:
-        if segment in generic_technical_segments:
+        if segment in GENERIC_TECHNICAL_SEGMENTS:
             continue
         candidate = segment
         break
@@ -1892,7 +2165,23 @@ def module_key_files(code_dir: Path, module_paths: list[str]) -> list[str]:
 
 def module_test_paths(code_dir: Path, module_paths: list[str]) -> list[str]:
     all_tests = test_paths(code_dir)
-    return [path for path in all_tests if any(path_matches_root(path, root) for root in module_paths)]
+    matches = [path for path in all_tests if any(path_matches_root(path, root) for root in module_paths)]
+    if matches:
+        return matches
+    fallback_roots: list[str] = []
+    for root in module_paths:
+        root_path = PurePosixPath(root)
+        root_name = root_path.name
+        if root_name not in SUMMARY_AREA_CONTAINER_SEGMENTS | {"src", "app"}:
+            continue
+        parent = root_path.parent.as_posix()
+        if parent and parent != ".":
+            fallback_roots.extend([f"{parent}/test", f"{parent}/tests", f"{parent}/e2e"])
+        else:
+            fallback_roots.extend(["test", "tests", "e2e"])
+    if fallback_roots:
+        return [path for path in all_tests if any(path_matches_root(path, root) for root in fallback_roots)]
+    return []
 
 
 def module_responsibility(module: str) -> str:
@@ -1932,8 +2221,414 @@ def feature_title(feature: str) -> str:
     return feature.replace("-", " ").replace("_", " ").title()
 
 
-def feature_line_refs(code_dir: Path, feature_paths: list[str]) -> list[str]:
-    return line_refs_for_paths(code_dir, feature_paths)
+def should_scan_summary_file(relative_path: str) -> bool:
+    path = PurePosixPath(relative_path)
+    suffix = path.suffix.lower()
+    if suffix in SUMMARY_BINARY_SUFFIXES:
+        return False
+    if suffix in SUMMARY_TEXT_SUFFIXES:
+        return True
+    if path.name in GLOBAL_CONFIG_FILES or path.name in ENTRYPOINT_FILE_NAMES:
+        return True
+    return not suffix and path.name.lower() in {"dockerfile", "makefile", "justfile"}
+
+
+def language_name_for_path(relative_path: str) -> str | None:
+    path = PurePosixPath(relative_path)
+    if path.name == "Dockerfile":
+        return "Dockerfile"
+    if path.name == "Makefile":
+        return "Makefile"
+    if path.name == "justfile":
+        return "Justfile"
+    return LANGUAGE_NAMES.get(path.suffix.lower())
+
+
+def summary_area_for_local_path(local_path: str) -> str:
+    path = PurePosixPath(local_path)
+    directory_parts = [part for part in path.parts[:-1] if part]
+    if not directory_parts:
+        return "module-root"
+    if directory_parts[0].lower() in SUMMARY_AREA_CONTAINER_SEGMENTS and len(directory_parts) > 1:
+        return "/".join(directory_parts[:2])
+    return directory_parts[0]
+
+
+def module_category_hits(module: str, text: str) -> set[str]:
+    normalized = normalize_match_text(text)
+    categories: set[str] = set()
+    for category, keywords in MODULE_CATEGORY_KEYWORDS.get(module, {}).items():
+        for keyword in keywords:
+            normalized_keyword = normalize_match_text(keyword)
+            if normalized_keyword and normalized_keyword in normalized:
+                categories.add(category)
+                break
+    return categories
+
+
+def framework_hits(module: str, relative_path: str, lines: list[str]) -> set[str]:
+    lowered_path = relative_path.lower()
+    lowered_text = "\n".join(lines[:160]).lower()
+    hits: set[str] = set()
+    for framework, patterns in MODULE_FRAMEWORK_PATTERNS.get(module, {}).items():
+        for pattern in patterns:
+            lowered_pattern = pattern.lower()
+            if lowered_pattern in lowered_path or lowered_pattern in lowered_text:
+                hits.add(framework)
+                break
+    return hits
+
+
+def prioritize_summary_paths(module: str, relative_paths: list[str]) -> list[str]:
+    def priority(relative_path: str) -> tuple[int, int, str]:
+        score = 100
+        lower = relative_path.lower()
+        name = PurePosixPath(relative_path).name
+        if name in ENTRYPOINT_FILE_NAMES or is_entrypoint_sensitive_path(relative_path):
+            score -= 60
+        score -= 12 * len(module_category_hits(module, relative_path))
+        if any(token in lower for token in ("test", "spec", "__tests__", "playwright", "cypress")):
+            score -= 6
+        if not should_scan_summary_file(relative_path):
+            score += 40
+        if PurePosixPath(relative_path).suffix.lower() in {".md", ".txt"}:
+            score += 20
+        return (score, len(relative_path), relative_path)
+
+    return sorted(relative_paths, key=priority)
+
+
+def format_counter_items(items: list[tuple[str, int]]) -> str:
+    if not items:
+        return "no dominant code pattern detected"
+    return ", ".join(f"{name} ({count})" for name, count in items)
+
+
+def format_inline_refs(refs: list[str]) -> str:
+    if not refs:
+        return ""
+    return ", ".join(refs[:MAX_SUMMARY_REFS])
+
+
+def build_module_profile(module: str, code_dir: Path, module_paths: list[str]) -> ModuleProfile:
+    scoped_files = module_scoped_files(code_dir, module_paths)
+    if not scoped_files:
+        return ModuleProfile(0, 0, [], [], {}, {}, [], [], [], [], {})
+
+    language_counts: Counter[str] = Counter()
+    area_counts: Counter[str] = Counter()
+    area_paths: dict[str, list[str]] = defaultdict(list)
+    category_counts: Counter[str] = Counter()
+    category_paths: dict[str, list[str]] = defaultdict(list)
+
+    for relative_path in scoped_files:
+        language = language_name_for_path(relative_path)
+        if language:
+            language_counts[language] += 1
+
+        local_path = relative_within_module_root(relative_path, module_paths)
+        area = summary_area_for_local_path(local_path)
+        area_counts[area] += 1
+        if len(area_paths[area]) < MAX_SUMMARY_REFS:
+            area_paths[area].append(relative_path)
+
+        for category in module_category_hits(module, relative_path):
+            category_counts[category] += 1
+            if len(category_paths[category]) < MAX_SUMMARY_REFS:
+                category_paths[category].append(relative_path)
+
+    framework_counts: Counter[str] = Counter()
+    inspected_files = 0
+    for relative_path in prioritize_summary_paths(module, scoped_files)[:MAX_SUMMARY_SCAN_FILES]:
+        if not should_scan_summary_file(relative_path):
+            continue
+        try:
+            lines = (code_dir / relative_path).read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            continue
+        inspected_files += 1
+
+        content_probe = relative_path + "\n" + "\n".join(lines[:160])
+        for category in module_category_hits(module, content_probe):
+            category_counts[category] += 1
+            if len(category_paths[category]) < MAX_SUMMARY_REFS:
+                category_paths[category].append(relative_path)
+
+        for framework in framework_hits(module, relative_path, lines):
+            framework_counts[framework] += 1
+
+    top_areas = area_counts.most_common(MAX_SUMMARY_AREA_ITEMS)
+    area_refs = {
+        area: line_refs_for_paths(code_dir, area_paths.get(area, []), MAX_SUMMARY_REFS)
+        for area, _ in top_areas
+    }
+    ranked_categories = sorted(
+        category_counts.items(),
+        key=lambda item: (-item[1], MODULE_CATEGORY_LABELS.get(module, {}).get(item[0], item[0])),
+    )[:MAX_SUMMARY_CATEGORY_ITEMS]
+    category_refs = {
+        category: line_refs_for_paths(code_dir, category_paths.get(category, []), MAX_SUMMARY_REFS)
+        for category, _ in ranked_categories
+    }
+
+    key_paths: list[str] = []
+    key_paths.extend(module_entrypoints(code_dir, module_paths)[:MAX_SUMMARY_REFS])
+    for category, _ in ranked_categories:
+        key_paths.extend(category_paths.get(category, [])[:1])
+    for area, _ in top_areas:
+        key_paths.extend(area_paths.get(area, [])[:1])
+    if not key_paths:
+        key_paths.extend(scoped_files[:MAX_LISTED_ITEMS])
+    key_refs = limited_paths(line_refs_for_paths(code_dir, list(dict.fromkeys(key_paths))), MAX_LISTED_ITEMS)
+
+    return ModuleProfile(
+        total_files=len(scoped_files),
+        inspected_files=inspected_files,
+        languages=language_counts.most_common(4),
+        focus_areas=top_areas,
+        category_refs=category_refs,
+        category_counts={category: count for category, count in ranked_categories},
+        frameworks=framework_counts.most_common(4),
+        key_refs=key_refs,
+        entrypoints=limited_paths(line_refs_for_paths(code_dir, module_entrypoints(code_dir, module_paths))),
+        tests=limited_paths(line_refs_for_paths(code_dir, module_test_paths(code_dir, module_paths))),
+        area_refs=area_refs,
+    )
+
+
+def module_summary_lines(module: str, profile: ModuleProfile, module_features: dict[str, list[str]]) -> list[str]:
+    if not profile.total_files:
+        return ["- No module-scoped files were discovered automatically."]
+
+    lines = [
+        (
+            f"- Code footprint: `{profile.total_files}` files in this module; "
+            f"representative code inspection covered `{profile.inspected_files}` files. "
+            f"Dominant languages/config types: {format_counter_items(profile.languages)}."
+        )
+    ]
+
+    if profile.focus_areas:
+        area_parts = []
+        for area, count in profile.focus_areas:
+            refs = format_inline_refs(profile.area_refs.get(area, []))
+            if refs:
+                area_parts.append(f"`{area}` ({count}; {refs})")
+            else:
+                area_parts.append(f"`{area}` ({count})")
+        lines.append("- Code organization: " + ", ".join(area_parts) + ".")
+
+    if profile.frameworks:
+        lines.append(f"- Framework/runtime signals found in code: {format_counter_items(profile.frameworks)}.")
+
+    if module_features:
+        feature_names = ", ".join(f"`{feature}`" for feature in sorted(module_features)[:6])
+        lines.append(f"- Functional slices inferred from code layout: {feature_names}.")
+    else:
+        lines.append("- Functional slices are not strongly separated by path names; the module appears organized mainly by technical layers.")
+
+    labels = MODULE_CATEGORY_LABELS.get(module, {})
+    ranked_categories = sorted(profile.category_counts.items(), key=lambda item: (-item[1], labels.get(item[0], item[0])))
+    for category, count in ranked_categories:
+        refs = format_inline_refs(profile.category_refs.get(category, []))
+        label = labels.get(category, category.replace("-", " "))
+        if refs:
+            lines.append(f"- {label}: `{count}` matching code signals. Representative refs: {refs}.")
+        else:
+            lines.append(f"- {label}: `{count}` matching code signals.")
+
+    if profile.entrypoints:
+        lines.append("- Module-local entrypoints or startup-sensitive files: " + format_inline_refs(profile.entrypoints) + ".")
+    else:
+        lines.append("- No common module-local entrypoint files were discovered automatically.")
+
+    if profile.tests:
+        lines.append("- Module-local tests and verification hooks: " + format_inline_refs(profile.tests) + ".")
+    else:
+        lines.append("- No module-local tests were detected automatically.")
+
+    return lines
+
+
+def feature_common_dir_prefix(feature_paths: list[str]) -> str:
+    if not feature_paths:
+        return ""
+    path_parts = [list(PurePosixPath(path).parts[:-1]) for path in feature_paths]
+    if not path_parts:
+        return ""
+    common = path_parts[0]
+    for parts in path_parts[1:]:
+        index = 0
+        max_index = min(len(common), len(parts))
+        while index < max_index and common[index] == parts[index]:
+            index += 1
+        common = common[:index]
+        if not common:
+            break
+    return "/".join(common)
+
+
+def feature_local_path(relative_path: str, common_prefix: str) -> str:
+    path = PurePosixPath(relative_path)
+    if common_prefix:
+        try:
+            return path.relative_to(PurePosixPath(common_prefix)).as_posix()
+        except ValueError:
+            return relative_path
+    return relative_path
+
+
+def build_feature_profile(
+    module: str,
+    feature: str,
+    code_dir: Path,
+    module_paths: list[str],
+    feature_paths: list[str],
+) -> FeatureProfile:
+    scoped_files = sorted(dict.fromkeys(feature_paths))
+    if not scoped_files:
+        return FeatureProfile(0, 0, [], [], {}, {}, [], [], [], [], {})
+
+    common_prefix = feature_common_dir_prefix(scoped_files)
+    language_counts: Counter[str] = Counter()
+    area_counts: Counter[str] = Counter()
+    area_paths: dict[str, list[str]] = defaultdict(list)
+    category_counts: Counter[str] = Counter()
+    category_paths: dict[str, list[str]] = defaultdict(list)
+
+    for relative_path in scoped_files:
+        language = language_name_for_path(relative_path)
+        if language:
+            language_counts[language] += 1
+
+        local_path = feature_local_path(relative_path, common_prefix)
+        area = summary_area_for_local_path(local_path)
+        area_counts[area] += 1
+        if len(area_paths[area]) < MAX_SUMMARY_REFS:
+            area_paths[area].append(relative_path)
+
+        for category in module_category_hits(module, relative_path):
+            category_counts[category] += 1
+            if len(category_paths[category]) < MAX_SUMMARY_REFS:
+                category_paths[category].append(relative_path)
+
+    framework_counts: Counter[str] = Counter()
+    inspected_files = 0
+    for relative_path in prioritize_summary_paths(module, scoped_files)[:MAX_SUMMARY_SCAN_FILES]:
+        if not should_scan_summary_file(relative_path):
+            continue
+        try:
+            lines = (code_dir / relative_path).read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            continue
+        inspected_files += 1
+
+        content_probe = relative_path + "\n" + "\n".join(lines[:160])
+        for category in module_category_hits(module, content_probe):
+            category_counts[category] += 1
+            if len(category_paths[category]) < MAX_SUMMARY_REFS:
+                category_paths[category].append(relative_path)
+
+        for framework in framework_hits(module, relative_path, lines):
+            framework_counts[framework] += 1
+
+    top_areas = area_counts.most_common(MAX_SUMMARY_AREA_ITEMS)
+    area_refs = {
+        area: line_refs_for_paths(code_dir, area_paths.get(area, []), MAX_SUMMARY_REFS)
+        for area, _ in top_areas
+    }
+    ranked_categories = sorted(
+        category_counts.items(),
+        key=lambda item: (-item[1], MODULE_CATEGORY_LABELS.get(module, {}).get(item[0], item[0])),
+    )[:MAX_SUMMARY_CATEGORY_ITEMS]
+    category_refs = {
+        category: line_refs_for_paths(code_dir, category_paths.get(category, []), MAX_SUMMARY_REFS)
+        for category, _ in ranked_categories
+    }
+
+    entrypoint_paths = [
+        path
+        for path in scoped_files
+        if is_entrypoint_sensitive_path(path) or PurePosixPath(path).name in ENTRYPOINT_FILE_NAMES
+    ]
+    test_paths_for_feature = [
+        path
+        for path in scoped_files
+        if any(token in path.lower() for token in ("test", "spec", "__tests__", "playwright", "cypress"))
+    ]
+    feature_terms = [term for term in normalize_feature_token(feature).split("-") if term]
+    if module_paths and feature_terms:
+        for path in module_test_paths(code_dir, module_paths):
+            lowered = path.lower()
+            if any(term in lowered for term in feature_terms):
+                test_paths_for_feature.append(path)
+    test_paths_for_feature = sorted(dict.fromkeys(test_paths_for_feature))
+
+    key_paths: list[str] = []
+    key_paths.extend(entrypoint_paths[:MAX_SUMMARY_REFS])
+    key_paths.extend(test_paths_for_feature[:1])
+    for category, _ in ranked_categories:
+        key_paths.extend(category_paths.get(category, [])[:1])
+    for area, _ in top_areas:
+        key_paths.extend(area_paths.get(area, [])[:1])
+    if not key_paths:
+        key_paths.extend(scoped_files[:MAX_LISTED_ITEMS])
+    key_refs = limited_paths(line_refs_for_paths(code_dir, list(dict.fromkeys(key_paths))), MAX_LISTED_ITEMS)
+
+    return FeatureProfile(
+        total_files=len(scoped_files),
+        inspected_files=inspected_files,
+        languages=language_counts.most_common(4),
+        focus_areas=top_areas,
+        category_refs=category_refs,
+        category_counts={category: count for category, count in ranked_categories},
+        frameworks=framework_counts.most_common(4),
+        key_refs=key_refs,
+        entrypoints=limited_paths(line_refs_for_paths(code_dir, entrypoint_paths)),
+        tests=limited_paths(line_refs_for_paths(code_dir, test_paths_for_feature)),
+        area_refs=area_refs,
+    )
+
+
+def feature_summary_lines(module: str, feature: str, profile: FeatureProfile) -> list[str]:
+    if not profile.total_files:
+        return [f"- No code paths were grouped into the `{feature}` feature automatically."]
+
+    lines = [
+        (
+            f"- Code footprint: `{profile.total_files}` files are mapped to `{feature}`; "
+            f"representative code inspection covered `{profile.inspected_files}` files. "
+            f"Dominant languages/config types: {format_counter_items(profile.languages)}."
+        )
+    ]
+
+    if profile.focus_areas:
+        area_parts = []
+        for area, count in profile.focus_areas:
+            refs = format_inline_refs(profile.area_refs.get(area, []))
+            if refs:
+                area_parts.append(f"`{area}` ({count}; {refs})")
+            else:
+                area_parts.append(f"`{area}` ({count})")
+        lines.append("- Feature-local organization: " + ", ".join(area_parts) + ".")
+
+    if profile.frameworks:
+        lines.append(f"- Framework/runtime signals found in this feature: {format_counter_items(profile.frameworks)}.")
+
+    labels = MODULE_CATEGORY_LABELS.get(module, {})
+    ranked_categories = sorted(profile.category_counts.items(), key=lambda item: (-item[1], labels.get(item[0], item[0])))
+    if not ranked_categories:
+        lines.append("- No strong layer split was inferred for this feature; it appears as a compact implementation slice.")
+        return lines
+
+    for category, count in ranked_categories:
+        refs = format_inline_refs(profile.category_refs.get(category, []))
+        label = labels.get(category, category.replace("-", " "))
+        if refs:
+            lines.append(f"- {label}: `{count}` matching code signals. Representative refs: {refs}.")
+        else:
+            lines.append(f"- {label}: `{count}` matching code signals.")
+    return lines
 
 
 def shared_feature_modules(feature_map: dict[str, dict[str, list[str]]]) -> dict[str, list[str]]:
@@ -2300,18 +2995,18 @@ def generate_modules_index_block(
 
 def generate_module_overview_block(
     module: str,
-    code_dir: Path,
-    module_paths: list[str],
+    profile: ModuleProfile,
     module_features: dict[str, list[str]],
 ) -> str:
-    key_files = limited_paths(module_line_refs(code_dir, module_paths))
     tasks = module_tasks(module)
     lines = [
         "## Generated Overview",
         f"- Responsibility: {module_responsibility(module)}",
-        "- Key areas/files with symbol evidence (line hint when available):",
-        *format_list(key_files, "No concrete symbol-level evidence discovered yet.", quote=False),
-        "- Functional subdomains:",
+        "- Code-derived summary:",
+        *module_summary_lines(module, profile, module_features),
+        "- Representative implementation files:",
+        *format_list(profile.key_refs, "No representative symbol-level references discovered automatically.", quote=False),
+        "- Linked feature docs:",
         *format_list(
             [f"`{feature}` -> `{layout.relative_module_feature(module, feature)}`" for feature in sorted(module_features)],
             "No stable feature docs inferred for this module yet.",
@@ -2325,23 +3020,27 @@ def generate_module_overview_block(
 
 def generate_module_detail_block(
     module: str,
-    code_dir: Path,
     module_paths: list[str],
+    profile: ModuleProfile,
     module_map: dict[str, list[str]],
     module_features: dict[str, list[str]],
 ) -> str:
-    key_files = limited_paths(module_line_refs(code_dir, module_paths))
-    entrypoints = limited_paths(line_refs_for_paths(code_dir, module_entrypoints(code_dir, module_paths)))
-    tests = limited_paths(line_refs_for_paths(code_dir, module_test_paths(code_dir, module_paths)))
     sibling_modules = [name for name, paths in module_map.items() if name != module and paths]
     lines = [
-        "## Generated Evidence Snapshot",
+        "## Generated Code Summary",
         "- Content inside this AUTO block is managed by `scripts/sync_context_project.py`.",
         "- Add durable manual notes outside the AUTO block so sync can preserve them.",
         "- If this block is edited manually, future syncs stop unless `--force-generated` is used.",
         "",
         "### Scope Evidence",
         f"- Covers: {', '.join(f'`{path}`' for path in module_paths) if module_paths else 'No stable path mapping inferred yet.'}",
+        f"- Summary mode: code-derived module summary with representative references, not a file-only inventory.",
+        "",
+        "### Implementation Summary",
+        *module_summary_lines(module, profile, module_features),
+        "",
+        "### Representative Files",
+        *format_list(profile.key_refs, "No representative symbol-level references discovered automatically.", quote=False),
         "",
         "### Functional Subdomains",
         *format_list(
@@ -2350,12 +3049,8 @@ def generate_module_detail_block(
             quote=False,
         ),
         "",
-        "### Responsibility Evidence",
+        "### Responsibility And Dependency Notes",
         f"- {module_responsibility(module)}",
-        "- Key files with symbol evidence (line hint when available):",
-        *format_list(key_files, "No representative symbol-level evidence discovered automatically.", quote=False),
-        "",
-        "### Dependency Evidence",
     ]
     if sibling_modules:
         lines.extend(f"- See `{name}` module for adjacent behavior." for name in sibling_modules[:4])
@@ -2364,12 +3059,12 @@ def generate_module_detail_block(
     lines.extend(
         [
             "",
-            "### Flow Entrypoints",
+            "### Runtime And Tests",
             "- Candidate entrypoints with symbol evidence (line hint when available):",
-            *format_list(entrypoints, "No common entrypoint line references discovered inside this module.", quote=False),
+            *format_list(profile.entrypoints, "No common entrypoint line references discovered inside this module.", quote=False),
             "",
             "### Testing Hooks",
-            *format_list(tests, "No module-local test evidence discovered automatically.", quote=False),
+            *format_list(profile.tests, "No module-local test evidence discovered automatically.", quote=False),
         ]
     )
     return "\n".join(lines)
@@ -2378,39 +3073,29 @@ def generate_module_detail_block(
 def generate_feature_detail_block(
     module: str,
     feature: str,
-    code_dir: Path,
-    feature_paths: list[str],
+    profile: FeatureProfile,
 ) -> str:
-    line_refs = limited_paths(feature_line_refs(code_dir, feature_paths))
-    entrypoints = limited_paths(
-        line_refs_for_paths(
-            code_dir,
-            [path for path in feature_paths if is_entrypoint_sensitive_path(path) or PurePosixPath(path).name in ENTRYPOINT_FILE_NAMES],
-        )
-    )
-    tests = limited_paths(
-        line_refs_for_paths(
-            code_dir,
-            [path for path in feature_paths if any(token in path.lower() for token in ("test", "spec", "__tests__", "playwright", "cypress"))],
-        )
-    )
     lines = [
-        f"## Generated {feature_title(feature)} Snapshot",
+        f"## Generated {feature_title(feature)} Summary",
         f"- Parent module: `{module}`",
         "- Content inside this AUTO block is managed by `scripts/sync_context_project.py`.",
+        "- Summary mode: code-derived feature summary with representative references.",
         "",
-        "### Scope",
-        *format_list(line_refs, "No representative symbol-level evidence discovered automatically for this feature.", quote=False),
+        "### Implementation Summary",
+        *feature_summary_lines(module, feature, profile),
+        "",
+        "### Representative Files",
+        *format_list(profile.key_refs, "No representative symbol-level evidence discovered automatically for this feature.", quote=False),
         "",
         "### Responsibilities",
         f"- Captures the `{feature}` business slice inside the `{module}` technical module.",
         "- Add manual notes outside this AUTO block if the feature needs richer domain context.",
         "",
         "### Entrypoints",
-        *format_list(entrypoints, "No obvious entrypoints were inferred automatically for this feature.", quote=False),
+        *format_list(profile.entrypoints, "No obvious entrypoints were inferred automatically for this feature.", quote=False),
         "",
         "### Testing Hooks",
-        *format_list(tests, "No feature-local tests were inferred automatically.", quote=False),
+        *format_list(profile.tests, "No feature-local tests were inferred automatically.", quote=False),
     ]
     return "\n".join(lines)
 
@@ -2522,6 +3207,19 @@ def build_updates(
     multi_git: dict[str, dict[str, str | None]] | None = None,
 ) -> list[tuple[Path, str, str]]:
     updates: list[tuple[Path, str, str]] = []
+    module_profiles = {
+        module: build_module_profile(module, code_dir, module_map.get(module, []))
+        for module in modules
+        if module != "reviewer"
+    }
+    feature_profiles = {
+        module: {
+            feature: build_feature_profile(module, feature, code_dir, module_map.get(module, []), paths)
+            for feature, paths in sorted(feature_map.get(module, {}).items())
+        }
+        for module in modules
+        if module != "reviewer"
+    }
     prd_paths, requirements, requirement_rows = derive_requirement_rows(project_root, code_dir, feature_map)
     if mode.update_global or mode.name == "full":
         updates.append(
@@ -2590,26 +3288,34 @@ def build_updates(
     for module in module_targets:
         module_paths = module_map.get(module, [])
         module_features = feature_map.get(module, {})
+        profile = module_profiles.get(module) or build_module_profile(module, code_dir, module_paths)
         updates.append(
             (
                 layout.module_overview_path(project_root, module),
                 "module-overview",
-                generate_module_overview_block(module, code_dir, module_paths, module_features),
+                generate_module_overview_block(module, profile, module_features),
             )
         )
         updates.append(
             (
                 layout.module_detail_path(project_root, module),
                 "module-detail",
-                generate_module_detail_block(module, code_dir, module_paths, module_map, module_features),
+                generate_module_detail_block(module, module_paths, profile, module_map, module_features),
             )
         )
         for feature in feature_targets.get(module, []):
+            feature_profile = feature_profiles.get(module, {}).get(feature) or build_feature_profile(
+                module,
+                feature,
+                code_dir,
+                module_paths,
+                module_features.get(feature, []),
+            )
             updates.append(
                 (
                     layout.module_feature_path(project_root, module, feature),
                     "feature-detail",
-                    generate_feature_detail_block(module, feature, code_dir, module_features.get(feature, [])),
+                    generate_feature_detail_block(module, feature, feature_profile),
                 )
             )
 
