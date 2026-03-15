@@ -12,7 +12,8 @@ Use this reference when you need the detailed project-context structure rules fo
   3. `modules/<module>/README.md`
   4. `modules/<module>/<module>.md`
   5. `modules/<module>/<feature>.md` when stable business slices exist
-  6. `references/*` only for evidence-level checks
+  6. `references/requirements-map.md` when the task starts from PRD requirements
+  7. `references/*` only for evidence-level checks
 - Do not load all agents and modules eagerly. Prefer agent-first, task-scoped loading.
 
 ## Modules Directory Guidance

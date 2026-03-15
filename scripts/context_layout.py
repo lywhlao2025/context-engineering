@@ -33,6 +33,7 @@ MODULE_OVERVIEW_FILENAME = "README.md"
 REFERENCES_DIRNAME = "references"
 ENTRYPOINTS_FILENAME = "entrypoints.md"
 FEATURE_MAP_FILENAME = "feature-map.md"
+REQUIREMENTS_MAP_FILENAME = "requirements-map.md"
 
 SOURCES_DIRNAME = "sources"
 
@@ -150,6 +151,10 @@ def entrypoints_path(project_root: Path) -> Path:
 
 def feature_map_path(project_root: Path) -> Path:
     return references_dir(project_root) / FEATURE_MAP_FILENAME
+
+
+def requirements_map_path(project_root: Path) -> Path:
+    return references_dir(project_root) / REQUIREMENTS_MAP_FILENAME
 
 
 def sources_dir(target_root: Path) -> Path:

@@ -77,6 +77,7 @@ Use a two-stage model:
    - Once a project context exists, keep it bound to the same source. If the user wants to analyze a different repo, use a new `project_name`.
    - Sync only updates managed `AUTO` blocks. Manual notes outside those blocks are preserved.
    - Sync may generate `modules/<module>/<feature>.md` when the module contains stable business subdomains, and it also refreshes `references/feature-map.md` to connect matching features across technical modules.
+   - If PRD docs exist under `references/prd.md`, `references/requirements.md`, or `references/prd/*.md`, sync also refreshes `references/requirements-map.md` to trace requirement candidates to features/modules/code refs/tests.
    - Sync also fills `agents/agents.md` plus each active agent's `README.md`, `tools.md`, and `memory.md`; agent docs must not stay as empty placeholders after generation.
    - If a managed `AUTO` block was edited manually after the last sync, the sync stops unless `--force-generated` is passed.
    - Record the review result with `--review-outcome` (`pending`, `pass`, `pass-with-findings`, `fail`) once the review pass is complete. Every sync with code changes resets the recorded outcome back to `pending` until a new review is recorded.
@@ -87,7 +88,7 @@ Use a two-stage model:
    - Fill `agents/agents.md`, `agents/<agent>/README.md`, `agents/<agent>/tools.md`, and `agents/<agent>/memory.md` with non-placeholder content so the routed sub-agent can initialize with real project context.
    - Load the task-matched agent first, then fill `modules/<module>/README.md` (overview) and `modules/<module>/<module>.md` (detail) through that agent's scope.
    - When a technical module contains stable business features, also fill `modules/<module>/<feature>.md` as second-layer feature docs.
-   - Fill `references/entrypoints.md` and `references/feature-map.md` with code-level indexes.
+   - Fill `references/entrypoints.md`, `references/feature-map.md`, and (when PRD docs exist) `references/requirements-map.md` with code-level indexes and requirement trace mapping.
    - Important technical claims must come from code-level inspection inside the chosen scope, with file/symbol evidence (line hints when available), not just file-name or folder-name inference.
    - Follow this review order strictly:
      1. Inspect Git diff/tree or the sync output first.

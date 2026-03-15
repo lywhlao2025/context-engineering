@@ -214,6 +214,22 @@ def main():
     write_if_missing(layout.modules_index_path(project_root), TEMPLATE_MODULES_README.format(modules_dir=layout.MODULES_DIRNAME))
     write_if_missing(layout.entrypoints_path(project_root), "# Entrypoints\n\n- TODO: record key entrypoints and indices.\n")
     write_if_missing(layout.feature_map_path(project_root), "# Feature Map\n\n- TODO: map shared business features across technical modules.\n")
+    write_if_missing(
+        layout.requirements_map_path(project_root),
+        (
+            "# Requirements Map\n\n"
+            "- Add PRD docs under `references/prd.md` or `references/prd/*.md`.\n"
+            "- Run sync to refresh the generated requirement-to-code trace matrix.\n"
+        ),
+    )
+    write_if_missing(
+        layout.references_dir(project_root) / "prd.md",
+        (
+            "# PRD\n\n"
+            "## Requirements\n"
+            "- REQ-001: TODO describe one requirement with acceptance criteria.\n"
+        ),
+    )
 
     multi_sources = load_multi_sources(code_dir)
     if multi_sources:

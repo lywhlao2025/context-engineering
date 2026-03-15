@@ -70,3 +70,10 @@ Use this reference when filling generated L1/L2/L3 context documents.
 - Shared business features across technical modules
 - Links such as `frontend/new-sign.md` and `backend/new-sign.md`
 - Keep generated content inside a managed `AUTO` block so manual notes can live around it.
+
+## L3 (`references/requirements-map.md`)
+
+- PRD requirement candidates and trace rows (`req_id`, `prd_ref`, `feature_keys`, `modules`)
+- Mapped code/test references for each requirement row
+- Confidence and status (`mapped`, `partial`, `unresolved`) for delivery gating
+- Keep generated content inside a managed `AUTO` block so manual notes can live around it.

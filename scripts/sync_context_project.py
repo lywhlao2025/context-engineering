@@ -220,6 +220,61 @@ SYMBOL_PATTERNS_BY_SUFFIX = {
     ".cs": GENERIC_CLASS_SYMBOL_PATTERNS,
     ".swift": GENERIC_CLASS_SYMBOL_PATTERNS,
 }
+PRD_FILENAME_CANDIDATES = ("prd.md", "requirements.md")
+PRD_DIRNAME = "prd"
+REQ_ID_PATTERN = re.compile(r"\b([A-Z][A-Z0-9_-]{1,24}-\d{1,6})\b")
+PRD_HEADING_PATTERN = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*$")
+PRD_LIST_PATTERN = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+(.+?)\s*$")
+PRD_SECTION_IGNORE = {
+    "overview",
+    "scope",
+    "background",
+    "goals",
+    "goal",
+    "goals and scope",
+    "requirements",
+    "appendix",
+    "附录",
+    "背景",
+    "目标",
+    "范围",
+    "需求",
+}
+MATCH_STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "from",
+    "into",
+    "when",
+    "where",
+    "what",
+    "which",
+    "will",
+    "must",
+    "should",
+    "need",
+    "allow",
+    "allows",
+    "can",
+    "able",
+    "about",
+    "under",
+    "over",
+    "after",
+    "before",
+    "todo",
+    "done",
+    "feature",
+    "features",
+    "requirement",
+    "requirements",
+    "module",
+    "modules",
+}
 
 
 @dataclass
@@ -244,6 +299,14 @@ class ReviewRecord:
     notes: str | None
     recorded_at: str | None
     reviewed_head: str | None
+
+
+@dataclass
+class RequirementCandidate:
+    req_id: str
+    title: str
+    text: str
+    prd_ref: str
 
 
 class SyncError(RuntimeError):
@@ -721,6 +784,7 @@ def expected_generated_targets(
                 (layout.skill_path(project_root), "l1"),
                 (layout.entrypoints_path(project_root), "entrypoints"),
                 (layout.feature_map_path(project_root), "feature-map"),
+                (layout.requirements_map_path(project_root), "requirements-map"),
                 (layout.modules_index_path(project_root), "module-index"),
                 (layout.agents_index_path(project_root), "agent-index"),
             ]
@@ -1065,6 +1129,336 @@ def feature_key_signature(value: object) -> dict[str, tuple[str, ...]]:
             features = ()
         signature[module] = features
     return dict(sorted(signature.items()))
+
+
+def discover_prd_paths(project_root: Path) -> list[Path]:
+    references_root = layout.references_dir(project_root)
+    paths: list[Path] = []
+    for filename in PRD_FILENAME_CANDIDATES:
+        candidate = references_root / filename
+        if candidate.exists() and candidate.is_file():
+            paths.append(candidate)
+    prd_dir = references_root / PRD_DIRNAME
+    if prd_dir.exists() and prd_dir.is_dir():
+        for candidate in sorted(prd_dir.rglob("*.md")):
+            if candidate.is_file():
+                paths.append(candidate)
+    return sorted(dict.fromkeys(path.resolve() for path in paths))
+
+
+def clean_markdown_text(text: str) -> str:
+    cleaned = text.strip()
+    cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
+    cleaned = re.sub(r"[`*_~]+", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def normalize_match_text(value: str) -> str:
+    lowered = value.lower()
+    lowered = re.sub(r"[_/.-]+", " ", lowered)
+    lowered = re.sub(r"[^a-z0-9\u4e00-\u9fff\s]+", " ", lowered)
+    lowered = re.sub(r"\s+", " ", lowered)
+    return lowered.strip()
+
+
+def match_tokens(value: str) -> set[str]:
+    normalized = normalize_match_text(value)
+    tokens = set(re.findall(r"[a-z0-9]{2,}", normalized))
+    return {token for token in tokens if token not in MATCH_STOPWORDS}
+
+
+def req_id_from_text(raw_text: str, fallback_key: str) -> str:
+    match = REQ_ID_PATTERN.search(raw_text)
+    if match:
+        return match.group(1)
+    digest = hashlib.sha1(f"{fallback_key}|{raw_text}".encode("utf-8")).hexdigest()[:8].upper()
+    return f"AUTO-{digest}"
+
+
+def parse_prd_requirements(project_root: Path) -> tuple[list[Path], list[RequirementCandidate]]:
+    prd_paths = discover_prd_paths(project_root)
+    if not prd_paths:
+        return [], []
+
+    candidates: list[RequirementCandidate] = []
+    seen: set[tuple[str, str]] = set()
+
+    for prd_path in prd_paths:
+        relative = prd_path.relative_to(project_root).as_posix()
+        try:
+            lines = prd_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+
+        active_heading = ""
+        for line_number, line in enumerate(lines, start=1):
+            heading_match = PRD_HEADING_PATTERN.match(line)
+            if heading_match:
+                heading_level = len(heading_match.group(1))
+                heading_text = clean_markdown_text(heading_match.group(2))
+                heading_normalized = normalize_match_text(heading_text)
+                if heading_text:
+                    active_heading = heading_text
+                if heading_level >= 3 and len(heading_text) >= 8 and heading_normalized not in PRD_SECTION_IGNORE:
+                    req_id = req_id_from_text(heading_text, f"{relative}:{line_number}")
+                    record_key = (req_id, f"{relative}:{line_number}")
+                    if record_key not in seen:
+                        candidates.append(
+                            RequirementCandidate(
+                                req_id=req_id,
+                                title=heading_text[:120],
+                                text=heading_text,
+                                prd_ref=f"{relative}:{line_number}",
+                            )
+                        )
+                        seen.add(record_key)
+                continue
+
+            list_match = PRD_LIST_PATTERN.match(line)
+            line_text = clean_markdown_text(list_match.group(1) if list_match else line)
+            if len(line_text) < 8:
+                continue
+
+            if not list_match and not REQ_ID_PATTERN.search(line_text):
+                continue
+
+            merged_text = f"{active_heading}; {line_text}" if active_heading else line_text
+            req_id = req_id_from_text(line_text, f"{relative}:{line_number}")
+            record_key = (req_id, f"{relative}:{line_number}")
+            if record_key in seen:
+                continue
+            candidates.append(
+                RequirementCandidate(
+                    req_id=req_id,
+                    title=line_text[:120],
+                    text=merged_text,
+                    prd_ref=f"{relative}:{line_number}",
+                )
+            )
+            seen.add(record_key)
+
+    return prd_paths, candidates
+
+
+def summarize_refs(refs: list[str], limit: int = 3) -> str:
+    if not refs:
+        return "-"
+    if len(refs) <= limit:
+        return ", ".join(refs)
+    return ", ".join(refs[:limit]) + f", +{len(refs) - limit} more"
+
+
+def format_table_cell(value: str) -> str:
+    if not value:
+        return "-"
+    return value.replace("|", "\\|")
+
+
+def score_requirement_feature(req_text: str, req_tokens: set[str], profile: dict[str, object]) -> float:
+    normalized_text = normalize_match_text(req_text)
+    score = 0.0
+    feature_name = str(profile.get("feature_norm") or "")
+    module_name = str(profile.get("module_norm") or "")
+    profile_tokens = set(profile.get("tokens") or set())
+
+    if feature_name and feature_name in normalized_text:
+        score += 0.55
+    elif feature_name:
+        feature_parts = [part for part in feature_name.split() if part]
+        if feature_parts and all(part in normalized_text for part in feature_parts):
+            score += 0.35
+
+    if module_name and module_name in normalized_text:
+        score += 0.1
+
+    if req_tokens and profile_tokens:
+        overlap = req_tokens & profile_tokens
+        if overlap:
+            score += min(0.35, len(overlap) / max(len(req_tokens), 1) * 0.6)
+
+    return min(score, 1.0)
+
+
+def build_feature_profiles(
+    code_dir: Path,
+    feature_map: dict[str, dict[str, list[str]]],
+) -> list[dict[str, object]]:
+    profiles: list[dict[str, object]] = []
+    for module, features in sorted(feature_map.items()):
+        for feature, paths in sorted(features.items()):
+            code_refs = limited_paths(line_refs_for_paths(code_dir, paths), 8)
+            test_paths = [
+                path
+                for path in paths
+                if any(token in path.lower() for token in ("test", "spec", "__tests__", "playwright", "cypress"))
+            ]
+            test_refs = limited_paths(line_refs_for_paths(code_dir, test_paths), 6)
+            tokens = set()
+            tokens.update(match_tokens(module))
+            tokens.update(match_tokens(feature.replace("-", " ").replace("_", " ")))
+            for path in paths:
+                for segment in PurePosixPath(path).parts:
+                    tokens.update(match_tokens(segment))
+            profiles.append(
+                {
+                    "module": module,
+                    "module_norm": normalize_match_text(module),
+                    "feature": feature,
+                    "feature_norm": normalize_match_text(feature.replace("-", " ").replace("_", " ")),
+                    "tokens": tokens,
+                    "code_refs": code_refs,
+                    "test_refs": test_refs,
+                }
+            )
+    return profiles
+
+
+def generate_requirements_map_rows(
+    requirements: list[RequirementCandidate],
+    profiles: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for requirement in requirements:
+        req_tokens = match_tokens(requirement.text)
+        scored: list[tuple[float, dict[str, object]]] = []
+        for profile in profiles:
+            score = score_requirement_feature(requirement.text, req_tokens, profile)
+            if score > 0:
+                scored.append((score, profile))
+        scored.sort(key=lambda item: (-item[0], str(item[1].get("module")), str(item[1].get("feature"))))
+
+        selected: list[tuple[float, dict[str, object]]] = []
+        top_score = 0.0
+        if scored:
+            top_score = scored[0][0]
+            if top_score >= 0.2:
+                selected.append(scored[0])
+                if len(scored) > 1 and scored[1][0] >= max(0.2, top_score - 0.08):
+                    selected.append(scored[1])
+
+        features = [str(item[1]["feature"]) for item in selected]
+        modules = sorted({str(item[1]["module"]) for item in selected})
+        code_refs = limited_paths(
+            list(
+                dict.fromkeys(
+                    ref
+                    for _, profile in selected
+                    for ref in profile.get("code_refs") or []
+                )
+            ),
+            8,
+        )
+        test_refs = limited_paths(
+            list(
+                dict.fromkeys(
+                    ref
+                    for _, profile in selected
+                    for ref in profile.get("test_refs") or []
+                )
+            ),
+            6,
+        )
+
+        status = "unresolved"
+        if top_score >= 0.55:
+            status = "mapped"
+        elif top_score >= 0.2:
+            status = "partial"
+
+        rows.append(
+            {
+                "req_id": requirement.req_id,
+                "prd_ref": requirement.prd_ref,
+                "title": requirement.title,
+                "feature_keys": features,
+                "modules": modules,
+                "code_refs": code_refs,
+                "test_refs": test_refs,
+                "confidence": round(top_score, 3),
+                "status": status,
+            }
+        )
+    return rows
+
+
+def generate_requirements_map_block(
+    project_root: Path,
+    code_dir: Path,
+    feature_map: dict[str, dict[str, list[str]]],
+) -> str:
+    prd_paths, requirements = parse_prd_requirements(project_root)
+    profiles = build_feature_profiles(code_dir, feature_map)
+
+    lines = [
+        "## Generated Requirements Trace Map",
+        "- Links PRD requirements to inferred features, modules, and code/test references.",
+        "- Content inside this AUTO block is managed by `scripts/sync_context_project.py`.",
+    ]
+
+    if not prd_paths:
+        lines.extend(
+            [
+                "- No PRD docs found under `references/prd.md`, `references/requirements.md`, or `references/prd/*.md`.",
+                "- Add PRD docs there and rerun sync to build the trace map.",
+            ]
+        )
+        return "\n".join(lines)
+
+    lines.extend(
+        [
+            "- PRD sources:",
+            *format_list(
+                [path.relative_to(project_root).as_posix() for path in prd_paths],
+                "No PRD source files discovered.",
+                quote=False,
+            ),
+        ]
+    )
+
+    if not requirements:
+        lines.append("- No requirement candidates were extracted from the current PRD docs.")
+        return "\n".join(lines)
+
+    rows = generate_requirements_map_rows(requirements, profiles)
+    mapped = len([row for row in rows if row["status"] == "mapped"])
+    partial = len([row for row in rows if row["status"] == "partial"])
+    unresolved = len([row for row in rows if row["status"] == "unresolved"])
+
+    lines.extend(
+        [
+            f"- Requirement candidates: `{len(rows)}` (`mapped={mapped}`, `partial={partial}`, `unresolved={unresolved}`).",
+            "",
+            "### Machine Readable JSON",
+            "```json",
+            json.dumps(rows, indent=2, ensure_ascii=False),
+            "```",
+            "",
+            "### Trace Table",
+            "| req_id | prd_ref | feature_keys | modules | code_refs | test_refs | confidence | status |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+
+    for row in rows:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    format_table_cell(str(row["req_id"])),
+                    format_table_cell(str(row["prd_ref"])),
+                    format_table_cell(", ".join(row["feature_keys"]) if row["feature_keys"] else "-"),
+                    format_table_cell(", ".join(row["modules"]) if row["modules"] else "-"),
+                    format_table_cell(summarize_refs(row["code_refs"])),
+                    format_table_cell(summarize_refs(row["test_refs"])),
+                    format_table_cell(f"{float(row['confidence']):.3f}"),
+                    format_table_cell(str(row["status"])),
+                ]
+            )
+            + " |"
+        )
+
+    return "\n".join(lines)
 
 
 def format_list(items: list[str], empty_message: str, *, quote: bool = True) -> list[str]:
@@ -1573,7 +1967,8 @@ def generate_skill_block(
             f"- Load `{layout.MODULES_DIRNAME}/<module>/{layout.MODULE_OVERVIEW_FILENAME}` before "
             f"`{layout.MODULES_DIRNAME}/<module>/<module>.md`.",
             f"- If the module has stable business features, load `{layout.MODULES_DIRNAME}/<module>/<feature>.md` after the module index.",
-            f"- Load `{layout.REFERENCES_DIRNAME}/` only for evidence-level checks.",
+            f"- Load `{layout.REFERENCES_DIRNAME}/` only for evidence-level checks and requirement trace checks.",
+            f"- Use `{layout.REFERENCES_DIRNAME}/{layout.REQUIREMENTS_MAP_FILENAME}` to map PRD requirements to features/modules/code refs.",
             "",
             "## Spec-Driven Development",
             "- Keep spec-first changes outside this AUTO block if the project needs custom policy.",
@@ -1941,6 +2336,14 @@ def build_updates(
                     generate_feature_detail_block(module, feature, code_dir, module_features.get(feature, [])),
                 )
             )
+
+    updates.append(
+        (
+            layout.requirements_map_path(project_root),
+            "requirements-map",
+            generate_requirements_map_block(project_root, code_dir, feature_map),
+        )
+    )
 
     updates.append(
         (
