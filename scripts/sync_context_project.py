@@ -308,8 +308,6 @@ DOMAIN_ENTITY_SKIP_TOKENS = {
     "test",
     "__tests__",
     "spec",
-    "contract",
-    "contracts",
 }
 DOMAIN_STATE_PATTERN = re.compile(r"['\"]([a-z][a-z0-9_-]{2,})['\"]")
 DOMAIN_RULE_KEYWORDS = ("must", "should", "require", "required", "if ", "when ", ">=", "<=", "==", "!=")
@@ -494,17 +492,37 @@ def infer_modules_from_sources(sources: list[dict]) -> list[str]:
     return sorted(modules)
 
 
-def build_module_map_from_sources(sources: list[dict]) -> dict[str, list[str]]:
+def build_module_map_from_sources(sources: list[dict]) -> tuple[dict[str, list[str]], list[str]]:
     module_map: dict[str, list[str]] = {}
+    global_paths: list[str] = []
     for source in sources:
+        source_name = str(source["name"]).strip("/")
+        source_root = source["path"]
         source_modules = source.get("modules")
         if not source_modules:
-            source_modules = infer_modules(source["path"])
-        for module in source_modules:
-            if not module or module == "reviewer":
+            source_modules = infer_modules(source_root)
+        normalized_modules = [module for module in source_modules if module and module != "reviewer"]
+        for module in normalized_modules:
+            module_map.setdefault(module, [])
+
+        source_module_map, source_global_paths, _ = discover_module_map(source_root, source_modules)
+        for module in normalized_modules:
+            roots = source_module_map.get(module, [])
+            prefixed_roots = [f"{source_name}/{root}" for root in roots if root]
+            if prefixed_roots:
+                module_map[module].extend(prefixed_roots)
                 continue
-            module_map.setdefault(module, []).append(source["name"])
-    return {module: sorted(dict.fromkeys(paths)) for module, paths in module_map.items()}
+            # Only fall back to source root when that source maps to one module.
+            if len(normalized_modules) == 1 and source_name:
+                module_map[module].append(source_name)
+
+        global_paths.extend(f"{source_name}/{path}" for path in source_global_paths if path)
+
+    normalized_map: dict[str, list[str]] = {}
+    for module, roots in module_map.items():
+        normalized_map[module] = sorted(dict.fromkeys(roots))
+    normalized_global_paths = sorted(dict.fromkeys(global_paths))
+    return normalized_map, normalized_global_paths
 
 
 def ensure_clean_default_branch(repo_root: Path) -> tuple[str, str]:
@@ -1575,8 +1593,9 @@ def generate_domain_model_block(
     project_root: Path,
     code_dir: Path,
     feature_map: dict[str, dict[str, list[str]]],
+    prd_paths: list[Path],
+    requirement_rows: list[dict[str, object]],
 ) -> str:
-    prd_paths, _, requirement_rows = derive_requirement_rows(project_root, code_dir, feature_map)
     domain_rows = generate_domain_model_rows(code_dir, feature_map, requirement_rows)
 
     mapped = len([row for row in domain_rows if row["status"] == "mapped"])
@@ -1642,11 +1661,10 @@ def generate_domain_model_block(
 
 def generate_requirements_map_block(
     project_root: Path,
-    code_dir: Path,
-    feature_map: dict[str, dict[str, list[str]]],
+    prd_paths: list[Path],
+    requirements: list[RequirementCandidate],
+    rows: list[dict[str, object]],
 ) -> str:
-    prd_paths, requirements, rows = derive_requirement_rows(project_root, code_dir, feature_map)
-
     lines = [
         "## Generated Requirements Trace Map",
         "- Links PRD requirements to inferred features, modules, and code/test references.",
@@ -2504,6 +2522,7 @@ def build_updates(
     multi_git: dict[str, dict[str, str | None]] | None = None,
 ) -> list[tuple[Path, str, str]]:
     updates: list[tuple[Path, str, str]] = []
+    prd_paths, requirements, requirement_rows = derive_requirement_rows(project_root, code_dir, feature_map)
     if mode.update_global or mode.name == "full":
         updates.append(
             (
@@ -2598,14 +2617,14 @@ def build_updates(
         (
             layout.requirements_map_path(project_root),
             "requirements-map",
-            generate_requirements_map_block(project_root, code_dir, feature_map),
+            generate_requirements_map_block(project_root, prd_paths, requirements, requirement_rows),
         )
     )
     updates.append(
         (
             layout.domain_model_path(project_root),
             "domain-model",
-            generate_domain_model_block(project_root, code_dir, feature_map),
+            generate_domain_model_block(project_root, code_dir, feature_map, prd_paths, requirement_rows),
         )
     )
 
@@ -2969,8 +2988,7 @@ def main() -> None:
 
     if multi_sources:
         modules = infer_modules_from_sources(multi_sources)
-        module_map = build_module_map_from_sources(multi_sources)
-        global_paths = []
+        module_map, global_paths = build_module_map_from_sources(multi_sources)
         feature_map = discover_feature_map(code_dir, module_map)
     else:
         modules = infer_modules(code_dir)
