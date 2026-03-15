@@ -77,3 +77,11 @@ Use this reference when filling generated L1/L2/L3 context documents.
 - Mapped code/test references for each requirement row
 - Confidence and status (`mapped`, `partial`, `unresolved`) for delivery gating
 - Keep generated content inside a managed `AUTO` block so manual notes can live around it.
+
+## L3 (`references/domain-model.md`)
+
+- Inferred domain rows keyed by module + feature (`entity`, `feature_key`, `module`)
+- Linked requirement IDs (`linked_requirements`) when PRD matching exists
+- Candidate states and business rules inferred from code-level evidence
+- Confidence and status (`mapped`, `partial`, `unresolved`) for review prioritization
+- Keep generated content inside a managed `AUTO` block so manual notes can live around it.

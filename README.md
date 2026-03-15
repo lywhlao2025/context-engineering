@@ -16,7 +16,8 @@ The goal is to keep project context lightweight, navigable, and safe to update o
 - Infers module buckets such as `frontend`, `backend`, `qa`, `mobile`, `data`, `ops`, and `reviewer`.
 - Creates project-level docs, per-module docs, per-feature docs inside technical modules, and per-agent folders.
 - Fills agent docs (`agents.md`, per-agent `README.md`, `tools.md`, `memory.md`) during sync so sub-agents have real initialization context.
-- Builds a requirements trace map (`references/requirements-map.md`) from PRD docs under `references/prd.md` or `references/prd/*.md`.
+- Builds a requirements trace map (`references/requirements-map.md`) from PRD docs under `references/prd.md`, `references/requirements.md`, or `references/prd/*.md`.
+- Builds a domain model snapshot (`references/domain-model.md`) with inferred entities, states, rules, and requirement links.
 - Uses Git-first incremental sync only from a clean checked-out default branch (`main` or `master`) when a valid prior sync state exists.
 - Falls back to full sync when the repo is non-Git, the module map changes, or the diff is too broad.
 - Rewrites only managed `AUTO` blocks so manual notes outside those blocks survive syncs.
@@ -183,6 +184,7 @@ The sync currently updates generated `AUTO` blocks in:
 - `references/entrypoints.md`
 - `references/feature-map.md`
 - `references/requirements-map.md`
+- `references/domain-model.md`
 - `project_status.md`
 
 Manual content outside those blocks is preserved.
@@ -242,7 +244,8 @@ The scaffold produces a structure like this:
         ├── references/
         │   ├── entrypoints.md
         │   ├── feature-map.md
-        │   └── requirements-map.md
+        │   ├── requirements-map.md
+        │   └── domain-model.md
         └── .context-sync/
             └── state.json
 ```
@@ -257,6 +260,7 @@ The scaffold produces a structure like this:
 - Generated AUTO content now includes file/symbol evidence samples (with line hints when available), but it is still heuristic and should be validated during the mandatory review pass.
 - Feature inference is also heuristic; if the repo does not expose stable business boundaries in its paths and filenames, the generated feature docs will be sparse until the user adds manual guidance.
 - Requirement-to-code mapping is heuristic; keep PRD docs structured (clear requirement IDs and acceptance bullets) to improve matching quality.
+- Domain model inference is heuristic; review generated entities/states/rules before using them as architecture decisions.
 
 ## Positioning
 

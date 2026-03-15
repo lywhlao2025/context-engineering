@@ -34,6 +34,7 @@ REFERENCES_DIRNAME = "references"
 ENTRYPOINTS_FILENAME = "entrypoints.md"
 FEATURE_MAP_FILENAME = "feature-map.md"
 REQUIREMENTS_MAP_FILENAME = "requirements-map.md"
+DOMAIN_MODEL_FILENAME = "domain-model.md"
 
 SOURCES_DIRNAME = "sources"
 
@@ -155,6 +156,10 @@ def feature_map_path(project_root: Path) -> Path:
 
 def requirements_map_path(project_root: Path) -> Path:
     return references_dir(project_root) / REQUIREMENTS_MAP_FILENAME
+
+
+def domain_model_path(project_root: Path) -> Path:
+    return references_dir(project_root) / DOMAIN_MODEL_FILENAME
 
 
 def sources_dir(target_root: Path) -> Path:

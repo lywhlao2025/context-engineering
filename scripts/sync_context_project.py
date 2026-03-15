@@ -275,6 +275,44 @@ MATCH_STOPWORDS = {
     "module",
     "modules",
 }
+DOMAIN_ENTITY_SKIP_TOKENS = {
+    "src",
+    "app",
+    "apps",
+    "service",
+    "services",
+    "api",
+    "backend",
+    "frontend",
+    "shared",
+    "common",
+    "core",
+    "lib",
+    "libs",
+    "utils",
+    "util",
+    "components",
+    "pages",
+    "views",
+    "hooks",
+    "store",
+    "stores",
+    "types",
+    "models",
+    "entities",
+    "dto",
+    "controller",
+    "controllers",
+    "routes",
+    "tests",
+    "test",
+    "__tests__",
+    "spec",
+    "contract",
+    "contracts",
+}
+DOMAIN_STATE_PATTERN = re.compile(r"['\"]([a-z][a-z0-9_-]{2,})['\"]")
+DOMAIN_RULE_KEYWORDS = ("must", "should", "require", "required", "if ", "when ", ">=", "<=", "==", "!=")
 
 
 @dataclass
@@ -785,6 +823,7 @@ def expected_generated_targets(
                 (layout.entrypoints_path(project_root), "entrypoints"),
                 (layout.feature_map_path(project_root), "feature-map"),
                 (layout.requirements_map_path(project_root), "requirements-map"),
+                (layout.domain_model_path(project_root), "domain-model"),
                 (layout.modules_index_path(project_root), "module-index"),
                 (layout.agents_index_path(project_root), "agent-index"),
             ]
@@ -1382,13 +1421,231 @@ def generate_requirements_map_rows(
     return rows
 
 
+def derive_requirement_rows(
+    project_root: Path,
+    code_dir: Path,
+    feature_map: dict[str, dict[str, list[str]]],
+) -> tuple[list[Path], list[RequirementCandidate], list[dict[str, object]]]:
+    prd_paths, requirements = parse_prd_requirements(project_root)
+    profiles = build_feature_profiles(code_dir, feature_map)
+    rows = generate_requirements_map_rows(requirements, profiles)
+    return prd_paths, requirements, rows
+
+
+def safe_read_lines(file_path: Path) -> list[str]:
+    try:
+        return file_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return []
+
+
+def extract_domain_states_from_lines(lines: list[str]) -> list[str]:
+    states: set[str] = set()
+    for line in lines:
+        lowered = line.lower()
+        if "status" not in lowered and "state" not in lowered and "phase" not in lowered:
+            continue
+        for token in DOMAIN_STATE_PATTERN.findall(line):
+            normalized = normalize_feature_token(token)
+            if not normalized:
+                continue
+            if normalized in DOMAIN_ENTITY_SKIP_TOKENS:
+                continue
+            if len(normalized) < 3:
+                continue
+            states.add(normalized)
+            if len(states) >= MAX_LISTED_ITEMS:
+                return sorted(states)
+    return sorted(states)
+
+
+def extract_domain_rules_from_lines(lines: list[str]) -> list[str]:
+    rules: list[str] = []
+    for line in lines:
+        normalized = " ".join(line.strip().split())
+        if len(normalized) < 10:
+            continue
+        lowered = normalized.lower()
+        if not any(keyword in lowered for keyword in DOMAIN_RULE_KEYWORDS):
+            continue
+        cleaned = clean_markdown_text(normalized)
+        if not cleaned:
+            continue
+        if len(cleaned) > 140:
+            cleaned = cleaned[:137] + "..."
+        rules.append(cleaned)
+        if len(rules) >= MAX_LISTED_ITEMS:
+            break
+    return list(dict.fromkeys(rules))
+
+
+def infer_entity_label(module: str, feature: str, feature_paths: list[str]) -> str:
+    prioritized_segments: list[str] = []
+    for path in feature_paths:
+        parts = PurePosixPath(path).parts[:-1]
+        for segment in parts:
+            token = normalize_feature_token(segment)
+            if not token:
+                continue
+            if token in DOMAIN_ENTITY_SKIP_TOKENS:
+                continue
+            if token in {module, feature}:
+                continue
+            prioritized_segments.append(token)
+    if prioritized_segments:
+        return sorted(dict.fromkeys(prioritized_segments))[0]
+    return feature
+
+
+def generate_domain_model_rows(
+    code_dir: Path,
+    feature_map: dict[str, dict[str, list[str]]],
+    requirement_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    requirement_index: dict[tuple[str, str], set[str]] = {}
+    for row in requirement_rows:
+        req_id = str(row.get("req_id") or "").strip()
+        if not req_id:
+            continue
+        feature_keys = [str(item).strip() for item in row.get("feature_keys") or [] if str(item).strip()]
+        modules = [str(item).strip() for item in row.get("modules") or [] if str(item).strip()]
+        for module in modules:
+            for feature in feature_keys:
+                requirement_index.setdefault((module, feature), set()).add(req_id)
+
+    shared_features = shared_feature_modules(feature_map)
+    rows: list[dict[str, object]] = []
+    for module, features in sorted(feature_map.items()):
+        for feature, feature_paths in sorted(features.items()):
+            code_refs = limited_paths(line_refs_for_paths(code_dir, feature_paths), 8)
+            test_paths = [
+                path
+                for path in feature_paths
+                if any(token in path.lower() for token in ("test", "spec", "__tests__", "playwright", "cypress"))
+            ]
+            test_refs = limited_paths(line_refs_for_paths(code_dir, test_paths), 6)
+            linked_requirements = sorted(requirement_index.get((module, feature), set()))
+
+            lines: list[str] = []
+            for relative in feature_paths[:MAX_DISCOVERED_FILES]:
+                lines.extend(safe_read_lines(code_dir / relative))
+
+            states = extract_domain_states_from_lines(lines)
+            rules = extract_domain_rules_from_lines(lines)
+            entity = infer_entity_label(module, feature, feature_paths)
+            relations = [f"shared-feature-with:{item}" for item in shared_features.get(feature, []) if item != module]
+            relations = sorted(dict.fromkeys(relations))
+
+            confidence = 0.0
+            if linked_requirements:
+                confidence += 0.25
+            if states:
+                confidence += 0.3
+            if rules:
+                confidence += 0.3
+            if test_refs:
+                confidence += 0.15
+            confidence = round(min(confidence, 1.0), 3)
+
+            status = "unresolved"
+            if confidence >= 0.6:
+                status = "mapped"
+            elif confidence >= 0.25:
+                status = "partial"
+
+            rows.append(
+                {
+                    "entity": entity,
+                    "module": module,
+                    "feature_key": feature,
+                    "linked_requirements": linked_requirements,
+                    "states": states,
+                    "rules": rules,
+                    "relations": relations,
+                    "code_refs": code_refs,
+                    "test_refs": test_refs,
+                    "confidence": confidence,
+                    "status": status,
+                }
+            )
+    return rows
+
+
+def generate_domain_model_block(
+    project_root: Path,
+    code_dir: Path,
+    feature_map: dict[str, dict[str, list[str]]],
+) -> str:
+    prd_paths, _, requirement_rows = derive_requirement_rows(project_root, code_dir, feature_map)
+    domain_rows = generate_domain_model_rows(code_dir, feature_map, requirement_rows)
+
+    mapped = len([row for row in domain_rows if row["status"] == "mapped"])
+    partial = len([row for row in domain_rows if row["status"] == "partial"])
+    unresolved = len([row for row in domain_rows if row["status"] == "unresolved"])
+
+    lines = [
+        "## Generated Domain Model Snapshot",
+        "- Captures inferred business entities, states, rules, and requirement links per feature.",
+        "- Content inside this AUTO block is managed by `scripts/sync_context_project.py`.",
+    ]
+    if prd_paths:
+        lines.extend(
+            [
+                "- PRD sources used for requirement linking:",
+                *format_list(
+                    [path.relative_to(project_root).as_posix() for path in prd_paths],
+                    "No PRD source files discovered.",
+                    quote=False,
+                ),
+            ]
+        )
+    else:
+        lines.append("- PRD sources: none found; linked requirements may stay empty.")
+
+    if not domain_rows:
+        lines.append("- No feature-level domain rows were inferred automatically.")
+        return "\n".join(lines)
+
+    lines.extend(
+        [
+            f"- Domain rows: `{len(domain_rows)}` (`mapped={mapped}`, `partial={partial}`, `unresolved={unresolved}`).",
+            "",
+            "### Machine Readable JSON",
+            "```json",
+            json.dumps(domain_rows, indent=2, ensure_ascii=False),
+            "```",
+            "",
+            "### Domain Table",
+            "| entity | module | feature_key | linked_requirements | states | rules | confidence | status |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for row in domain_rows:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    format_table_cell(str(row["entity"])),
+                    format_table_cell(str(row["module"])),
+                    format_table_cell(str(row["feature_key"])),
+                    format_table_cell(", ".join(row["linked_requirements"]) if row["linked_requirements"] else "-"),
+                    format_table_cell(", ".join(row["states"]) if row["states"] else "-"),
+                    format_table_cell(", ".join(row["rules"][:2]) if row["rules"] else "-"),
+                    format_table_cell(f"{float(row['confidence']):.3f}"),
+                    format_table_cell(str(row["status"])),
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(lines)
+
+
 def generate_requirements_map_block(
     project_root: Path,
     code_dir: Path,
     feature_map: dict[str, dict[str, list[str]]],
 ) -> str:
-    prd_paths, requirements = parse_prd_requirements(project_root)
-    profiles = build_feature_profiles(code_dir, feature_map)
+    prd_paths, requirements, rows = derive_requirement_rows(project_root, code_dir, feature_map)
 
     lines = [
         "## Generated Requirements Trace Map",
@@ -1420,7 +1677,6 @@ def generate_requirements_map_block(
         lines.append("- No requirement candidates were extracted from the current PRD docs.")
         return "\n".join(lines)
 
-    rows = generate_requirements_map_rows(requirements, profiles)
     mapped = len([row for row in rows if row["status"] == "mapped"])
     partial = len([row for row in rows if row["status"] == "partial"])
     unresolved = len([row for row in rows if row["status"] == "unresolved"])
@@ -1969,6 +2225,7 @@ def generate_skill_block(
             f"- If the module has stable business features, load `{layout.MODULES_DIRNAME}/<module>/<feature>.md` after the module index.",
             f"- Load `{layout.REFERENCES_DIRNAME}/` only for evidence-level checks and requirement trace checks.",
             f"- Use `{layout.REFERENCES_DIRNAME}/{layout.REQUIREMENTS_MAP_FILENAME}` to map PRD requirements to features/modules/code refs.",
+            f"- Use `{layout.REFERENCES_DIRNAME}/{layout.DOMAIN_MODEL_FILENAME}` for inferred domain entities/states/rules before drafting technical plans.",
             "",
             "## Spec-Driven Development",
             "- Keep spec-first changes outside this AUTO block if the project needs custom policy.",
@@ -2342,6 +2599,13 @@ def build_updates(
             layout.requirements_map_path(project_root),
             "requirements-map",
             generate_requirements_map_block(project_root, code_dir, feature_map),
+        )
+    )
+    updates.append(
+        (
+            layout.domain_model_path(project_root),
+            "domain-model",
+            generate_domain_model_block(project_root, code_dir, feature_map),
         )
     )
 

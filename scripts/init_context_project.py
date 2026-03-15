@@ -223,6 +223,14 @@ def main():
         ),
     )
     write_if_missing(
+        layout.domain_model_path(project_root),
+        (
+            "# Domain Model\n\n"
+            "- Run sync to refresh the generated domain entities/states/rules snapshot.\n"
+            "- Add durable business notes outside AUTO blocks when needed.\n"
+        ),
+    )
+    write_if_missing(
         layout.references_dir(project_root) / "prd.md",
         (
             "# PRD\n\n"

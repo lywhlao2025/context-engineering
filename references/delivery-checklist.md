@@ -8,7 +8,8 @@ Use this reference before finalizing a generated or synced project context.
 - Each module has README + `<module>.md`
 - Stable business slices are documented as `<feature>.md` files under the relevant technical module when they can be inferred safely
 - References contain concrete file paths
-- Requirement trace map is generated when PRD docs are provided under `references/prd.md` or `references/prd/*.md`
+- Requirement trace map is generated when PRD docs are provided under `references/prd.md`, `references/requirements.md`, or `references/prd/*.md`
+- Domain model snapshot is generated in `references/domain-model.md` and reviewed for obvious heuristic errors
 - Loading paths cover UI/UX, core logic, QA, release scenarios
 - Agent folders exist with clear responsibilities
 - Mandatory review completed after generation/sync
@@ -35,4 +36,5 @@ Use this reference before finalizing a generated or synced project context.
 - `<target_root>/projects/<project_name>/references/entrypoints.md`
 - `<target_root>/projects/<project_name>/references/feature-map.md`
 - `<target_root>/projects/<project_name>/references/requirements-map.md` (when PRD docs exist)
+- `<target_root>/projects/<project_name>/references/domain-model.md`
 - `<target_root>/projects/<project_name>/.context-sync/state.json`
