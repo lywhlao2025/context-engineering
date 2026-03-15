@@ -1,4 +1,4 @@
-# Context-Engineering
+# context-enggineering-skill
 
 Build and maintain team-style project context directories for AI agents.
 

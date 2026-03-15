@@ -906,7 +906,7 @@ def upsert_auto_block(text: str, block_name: str, content: str) -> str:
     block = f"{begin}\n{content.rstrip()}\n{end}"
     pattern = auto_block_regex(block_name)
     if pattern.search(text):
-        updated = pattern.sub(block, text, count=1)
+        updated = pattern.sub(lambda _: block, text, count=1)
     else:
         trimmed = text.rstrip()
         if trimmed:

@@ -1,9 +1,9 @@
 ---
-name: context-engineering
+name: context-enggineering-skill
 description: Build or initialize team-style project context directories for context engineering. Use when the user says “构建/初始化项目上下文”, “针对该项目构建上下文”, **or** in English phrases like “build/initialize project context”, “scaffold project context”, “set up project context docs”, “create project context”, “generate project context docs”, “initialize context engineering project”, “set up team context”, “build context workspace”, or asks to scaffold a project context under a specified target directory (default ~/clawDir/team).
 ---
 
-# Context Engineering
+# context-enggineering-skill
 
 ## Overview
 
