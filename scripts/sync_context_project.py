@@ -352,6 +352,20 @@ def load_multi_sources(code_dir: Path) -> list[dict] | None:
     return normalized
 
 
+def multi_source_last_synced_head(previous_state: dict, source_name: str) -> str | None:
+    multi_state = previous_state.get("multi_sources")
+    if not isinstance(multi_state, dict):
+        return None
+    source_state = multi_state.get(source_name)
+    if not isinstance(source_state, dict):
+        return None
+    last_synced_head = source_state.get("last_synced_head")
+    if not isinstance(last_synced_head, str):
+        return None
+    normalized = last_synced_head.strip()
+    return normalized or None
+
+
 def ensure_multi_symlinks(code_dir: Path, sources: list[dict], allow_mutation: bool) -> None:
     for source in sources:
         link_path = code_dir / source["name"]
@@ -2333,20 +2347,26 @@ def main() -> None:
     elif multi_sources:
         # Aggregate changed paths from each source repo if available
         changed_paths = []
+        multi_sync_base_issues: list[str] = []
         for source_item in multi_sources:
             repo_root = is_git_repo(source_item["path"])
             if not repo_root:
                 continue
+            source_name = source_item["name"]
+            source_last_head = multi_source_last_synced_head(previous_state, source_name)
             src_changed, src_head, src_branch, src_issue = git_changed_files(
                 repo_root,
                 source_item["path"],
-                None,
-                False,
+                source_last_head,
+                bool(previous_state),
             )
             if src_issue:
-                sync_base_issue = src_issue
-            prefix = source_item["name"].strip('/')
+                multi_sync_base_issues.append(f"Source `{source_name}`: {src_issue}")
+            prefix = source_name.strip("/")
             changed_paths.extend([f"{prefix}/{path}" for path in src_changed])
+        changed_paths = sorted(dict.fromkeys(changed_paths))
+        if multi_sync_base_issues:
+            sync_base_issue = "; ".join(multi_sync_base_issues)
 
     changed_modules: list[str] = []
     update_global = True
@@ -2366,7 +2386,7 @@ def main() -> None:
         sync_base_issue,
     )
 
-    if git_repo_root and mode.name == "incremental" and not changed_paths:
+    if has_git and mode.name == "incremental" and not changed_paths:
         mode = SyncMode("noop", [], False, "No code changes detected since the last successful sync.")
 
     review_plan = determine_review_plan(
