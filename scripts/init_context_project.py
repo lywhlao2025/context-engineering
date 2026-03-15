@@ -19,6 +19,45 @@ import context_layout as layout
 from source_resolver import SourceResolutionError, resolve_code_source
 
 MULTI_SOURCE_FILENAMES = ("context-sources.json", ".context-sources.json")
+CORE_TECH_MODULES = ("frontend", "backend")
+OPTIONAL_TECH_MODULES = ("qa", "mobile", "data", "ops")
+SOURCE_ALLOWED_MODULES = set(CORE_TECH_MODULES + OPTIONAL_TECH_MODULES)
+PROJECT_ALLOWED_MODULES = set(CORE_TECH_MODULES + OPTIONAL_TECH_MODULES + ("reviewer",))
+MODULE_ALIAS_MAP = {
+    "frontend": "frontend",
+    "front-end": "frontend",
+    "front_end": "frontend",
+    "fe": "frontend",
+    "web": "frontend",
+    "client": "frontend",
+    "ui": "frontend",
+    "backend": "backend",
+    "back-end": "backend",
+    "back_end": "backend",
+    "be": "backend",
+    "server": "backend",
+    "api": "backend",
+    "service": "backend",
+    "services": "backend",
+    "qa": "qa",
+    "test": "qa",
+    "tests": "qa",
+    "e2e": "qa",
+    "mobile": "mobile",
+    "ios": "mobile",
+    "android": "mobile",
+    "data": "data",
+    "analytics": "data",
+    "ml": "data",
+    "model": "data",
+    "models": "data",
+    "ops": "ops",
+    "infra": "ops",
+    "devops": "ops",
+    "deploy": "ops",
+    "reviewer": "reviewer",
+    "review": "reviewer",
+}
 
 
 def ensure_parent(path: Path):
@@ -31,6 +70,49 @@ def write_if_missing(path: Path, content: str):
     ensure_parent(path)
     path.write_text(content, encoding="utf-8")
     return True
+
+
+def canonical_module_name(value: str) -> str:
+    token = str(value or "").strip().lower().replace("_", "-").replace(" ", "-")
+    while "--" in token:
+        token = token.replace("--", "-")
+    if not token:
+        return ""
+    return MODULE_ALIAS_MAP.get(token, token)
+
+
+def normalize_source_modules(raw_modules: list[str], source_name: str) -> list[str]:
+    modules: set[str] = set()
+    invalid: list[str] = []
+    for raw_module in raw_modules:
+        normalized = canonical_module_name(raw_module)
+        if not normalized:
+            continue
+        if normalized in SOURCE_ALLOWED_MODULES:
+            modules.add(normalized)
+        else:
+            invalid.append(str(raw_module))
+    if invalid:
+        allowed = ", ".join(f"'{name}'" for name in sorted(SOURCE_ALLOWED_MODULES))
+        raise ValueError(
+            f"Source '{source_name}' modules contain non-technical values: {', '.join(invalid)}. "
+            f"First-layer modules must be technical buckets ({allowed}); business slices belong under "
+            "modules/<frontend|backend>/<feature>.md."
+        )
+    if not modules:
+        raise ValueError(f"Source '{source_name}' modules must include at least one technical module.")
+    return sorted(modules)
+
+
+def ensure_project_modules(modules: set[str] | list[str]) -> list[str]:
+    normalized: set[str] = set()
+    for raw_module in modules:
+        module = canonical_module_name(raw_module)
+        if module in PROJECT_ALLOWED_MODULES:
+            normalized.add(module)
+    normalized.update(CORE_TECH_MODULES)
+    normalized.add("reviewer")
+    return sorted(normalized)
 
 
 def load_multi_sources(code_dir: Path) -> list[dict] | None:
@@ -54,7 +136,10 @@ def load_multi_sources(code_dir: Path) -> list[dict] | None:
                 if modules is not None:
                     if not isinstance(modules, list) or not modules:
                         raise SystemExit(f"Source '{name}' modules must be a non-empty list when provided.")
-                    modules = [str(module).strip() for module in modules if str(module).strip()]
+                    try:
+                        modules = normalize_source_modules(modules, name)
+                    except ValueError as exc:
+                        raise SystemExit(str(exc))
                 normalized.append({"name": name, "path": source_path, "modules": modules})
             return normalized
     return None
@@ -118,13 +203,13 @@ TEMPLATE_AGENTS = """# Agents
 TEMPLATE_MODULES_README = """# Modules
 
 - Place analysis outputs here.
-- Suggested structure depends on tech stack.
-- Common buckets: {modules_dir}/backend/, {modules_dir}/frontend/, {modules_dir}/qa/, {modules_dir}/reviewer/
-- Each technical module folder can contain function-level docs such as `{modules_dir}/frontend/new-sign.md`.
+- First layer uses technical boundaries. Always keep `{modules_dir}/frontend/` and `{modules_dir}/backend/`.
+- Optional technical buckets include `{modules_dir}/qa/`, `{modules_dir}/mobile/`, `{modules_dir}/data/`, `{modules_dir}/ops/`, and `{modules_dir}/reviewer/`.
+- Business slices belong to second-layer files such as `{modules_dir}/frontend/new-sign.md`.
 """
 
 
-def infer_modules(code_dir: Path):
+def infer_detected_modules(code_dir: Path) -> list[str]:
     candidates = set()
     lower_names = {p.name.lower() for p in code_dir.iterdir() if p.is_dir()}
 
@@ -153,12 +238,12 @@ def infer_modules(code_dir: Path):
     if "Dockerfile" in files or "docker-compose.yml" in files:
         candidates.add("ops")
 
-    if not candidates:
-        candidates.update({"backend", "frontend", "qa", "reviewer"})
-
-    # Always include reviewer bucket
-    candidates.add("reviewer")
     return sorted(candidates)
+
+
+def infer_modules(code_dir: Path) -> list[str]:
+    detected = infer_detected_modules(code_dir)
+    return ensure_project_modules(detected)
 
 
 def main():
@@ -249,10 +334,9 @@ def main():
     if multi_sources:
         modules = set()
         for source in multi_sources:
-            source_modules = source.get("modules") or infer_modules(source["path"])
+            source_modules = source.get("modules") or infer_detected_modules(source["path"])
             modules.update(source_modules)
-        modules.add("reviewer")
-        modules = sorted(modules)
+        modules = ensure_project_modules(modules)
     else:
         modules = infer_modules(code_dir)
     for module in modules:

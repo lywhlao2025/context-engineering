@@ -32,7 +32,13 @@ except ModuleNotFoundError:  # pragma: no cover
     tomllib = None
 
 import context_layout as layout
-from init_context_project import infer_modules
+from init_context_project import (
+    CORE_TECH_MODULES,
+    ensure_project_modules,
+    infer_detected_modules,
+    infer_modules,
+    normalize_source_modules,
+)
 from source_resolver import ResolvedSource, SourceResolutionError, normalize_source_locator, resolve_code_source
 
 
@@ -711,7 +717,10 @@ def load_multi_sources(code_dir: Path) -> list[dict] | None:
         if modules is not None:
             if not isinstance(modules, list) or not modules:
                 raise SyncError(f"Source '{name}' modules must be a non-empty list when provided.")
-            modules = [str(module).strip() for module in modules if str(module).strip()]
+            try:
+                modules = normalize_source_modules(modules, name)
+            except ValueError as exc:
+                raise SyncError(str(exc)) from exc
         normalized.append({
             "name": name,
             "path": source_path,
@@ -754,12 +763,11 @@ def infer_modules_from_sources(sources: list[dict]) -> list[str]:
     for source in sources:
         source_modules = source.get("modules")
         if not source_modules:
-            source_modules = infer_modules(source["path"])
+            source_modules = infer_detected_modules(source["path"])
         for module in source_modules:
             if module:
                 modules.add(module)
-    modules.add("reviewer")
-    return sorted(modules)
+    return ensure_project_modules(modules)
 
 
 def build_module_map_from_sources(sources: list[dict]) -> tuple[dict[str, list[str]], list[str]]:
@@ -770,7 +778,7 @@ def build_module_map_from_sources(sources: list[dict]) -> tuple[dict[str, list[s
         source_root = source["path"]
         source_modules = source.get("modules")
         if not source_modules:
-            source_modules = infer_modules(source_root)
+            source_modules = infer_detected_modules(source_root)
         normalized_modules = [module for module in source_modules if module and module != "reviewer"]
         for module in normalized_modules:
             module_map.setdefault(module, [])
@@ -789,6 +797,8 @@ def build_module_map_from_sources(sources: list[dict]) -> tuple[dict[str, list[s
         global_paths.extend(f"{source_name}/{path}" for path in source_global_paths if path)
 
     normalized_map: dict[str, list[str]] = {}
+    for module in CORE_TECH_MODULES:
+        module_map.setdefault(module, [])
     for module, roots in module_map.items():
         normalized_map[module] = sorted(dict.fromkeys(roots))
     normalized_global_paths = sorted(dict.fromkeys(global_paths))

@@ -53,8 +53,9 @@ Use a two-stage model:
        --code-dir <code_dir> | --git-url <git_url> \
        --target-root <target_root>
      ```
-   - The script infers module buckets from the codebase and creates module folders dynamically.
-   - Treat the first layer under `modules/` as technical boundaries such as `frontend` or `backend`; use second-layer feature docs under those folders for stable business slices such as `new-sign` or `renewal`.
+   - The script infers technical module buckets from the codebase and creates module folders dynamically.
+   - First-layer modules must stay technical (`frontend`/`backend` first, optional `qa`/`mobile`/`data`/`ops`). Stable business slices belong to second-layer feature docs under those folders (for example `modules/frontend/new-sign.md`, `modules/backend/renewal.md`).
+   - For multi-source configs, `context-sources.json` `modules` values must also be technical buckets; business module names are rejected and should be represented as second-layer feature docs.
    - If `git_url` is used, the script clones the repo into `<target_root>/sources/<project_name>` and analyzes that managed checkout.
    - The script is idempotent: it won’t overwrite existing files.
 
