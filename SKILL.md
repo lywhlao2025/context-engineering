@@ -54,8 +54,8 @@ Use a two-stage model:
        --target-root <target_root>
      ```
    - The script infers technical module buckets from the codebase and creates module folders dynamically.
-   - First-layer modules must stay technical (`frontend`/`backend` first, optional `qa`/`mobile`/`data`/`ops`). Stable business slices belong to second-layer feature docs under those folders (for example `modules/frontend/new-sign.md`, `modules/backend/renewal.md`).
-   - For multi-source configs, `context-sources.json` `modules` values must also be technical buckets; business module names are rejected and should be represented as second-layer feature docs.
+   - First-layer modules must stay technical (`frontend`/`backend` are fallback baseline buckets, optional `qa`/`mobile`/`data`/`ops`). Stable business slices belong to second-layer feature docs under those folders (for example `modules/frontend/new-sign.md`, `modules/backend/renewal.md`).
+   - For multi-source configs, `context-sources.json` `modules` values are validation-only and must be technical buckets; they do not override code-inferred first-layer modules. Business module names are rejected and should be represented as second-layer feature docs.
    - If `git_url` is used, the script clones the repo into `<target_root>/sources/<project_name>` and analyzes that managed checkout.
    - The script is idempotent: it won’t overwrite existing files.
 
@@ -77,7 +77,7 @@ Use a two-stage model:
    - If the sync state is missing, invalid, the previous sync head is not usable on the current default branch, or the module map changed, the sync falls back to a full refresh.
    - Once a project context exists, keep it bound to the same source. If the user wants to analyze a different repo, use a new `project_name`.
    - Sync only updates managed `AUTO` blocks. Manual notes outside those blocks are preserved.
-   - Sync may generate `modules/<module>/<feature>.md` when the module contains stable business subdomains, and it also refreshes `references/feature-map.md` to connect matching features across technical modules.
+   - Sync may generate `modules/<module>/<feature>.md` when the module contains stable business subdomains with code evidence, and it also refreshes `references/feature-map.md` to connect matching features across technical modules.
    - If PRD docs exist under `references/prd.md`, `references/requirements.md`, or `references/prd/*.md`, sync also refreshes `references/requirements-map.md` to trace requirement candidates to features/modules/code refs/tests.
    - Sync also refreshes `references/domain-model.md` with inferred entities, states, business rules, and requirement links at feature scope.
    - Sync also fills `agents/agents.md` plus each active agent's `README.md`, `tools.md`, and `memory.md`; agent docs must not stay as empty placeholders after generation.
