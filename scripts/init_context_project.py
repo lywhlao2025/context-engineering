@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 from datetime import datetime
+import os
 from pathlib import Path
 import json
 
@@ -57,6 +58,131 @@ MODULE_ALIAS_MAP = {
     "deploy": "ops",
     "reviewer": "reviewer",
     "review": "reviewer",
+}
+INFER_SCAN_IGNORE_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".idea",
+    ".vscode",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".turbo",
+    ".next",
+    ".nuxt",
+    ".cache",
+    "__pycache__",
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    "vendor",
+    "target",
+}
+INFER_SCAN_SUFFIXES = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".kts",
+    ".cs",
+    ".swift",
+    ".rb",
+    ".php",
+    ".dart",
+    ".json",
+    ".toml",
+    ".yaml",
+    ".yml",
+    ".sql",
+}
+INFER_SCAN_FILENAMES = {"Dockerfile", "Makefile", "justfile"}
+INFER_SCAN_MAX_FILES = 160
+INFER_SCAN_MAX_BYTES = 256 * 1024
+MODULE_CODE_SIGNAL_PATTERNS = {
+    "frontend": (
+        "react",
+        "next",
+        "nuxt",
+        "vue",
+        "svelte",
+        "vite",
+        "webpack",
+        "browserrouter",
+        "usestate(",
+        "useeffect(",
+        "<template",
+    ),
+    "backend": (
+        "express(",
+        "fastapi",
+        "flask(",
+        "django",
+        "nestjs",
+        "@restcontroller",
+        "springboot",
+        "koa(",
+        "sqlalchemy",
+        "typeorm",
+        "prisma",
+    ),
+    "qa": (
+        "pytest",
+        "unittest",
+        "jest",
+        "vitest",
+        "playwright",
+        "cypress",
+        "describe(",
+        "test(",
+    ),
+    "mobile": (
+        "react-native",
+        "expo",
+        "swiftui",
+        "uikit",
+        "androidx",
+        "flutter",
+        "dart:ui",
+    ),
+    "data": (
+        "pandas",
+        "numpy",
+        "scikit",
+        "tensorflow",
+        "pytorch",
+        "xgboost",
+        "spark",
+        "airflow",
+        "dbt",
+        "polars",
+    ),
+    "ops": (
+        "terraform",
+        "kubernetes",
+        "helm",
+        "ansible",
+        "docker compose",
+        "github/workflows",
+        "gitlab-ci",
+        "kustomize",
+        "prometheus",
+        "grafana",
+    ),
+}
+MODULE_PATH_SIGNAL_PATTERNS = {
+    "frontend": ("/frontend/", "/web/", "/client/", "/ui/", "/components/", "/pages/"),
+    "backend": ("/backend/", "/server/", "/api/", "/services/", "/controllers/", "/routes/"),
+    "qa": ("/test/", "/tests/", "__tests__", "/e2e/", "playwright", "cypress", ".spec."),
+    "mobile": ("/mobile/", "/ios/", "/android/"),
+    "data": ("/data/", "/analytics/", "/ml/", "/models/", "/pipelines/", "/etl/"),
+    "ops": ("/ops/", "/infra/", "/deploy/", "/helm/", "/k8s/", "/.github/workflows/"),
 }
 
 
@@ -110,7 +236,8 @@ def ensure_project_modules(modules: set[str] | list[str]) -> list[str]:
         module = canonical_module_name(raw_module)
         if module in PROJECT_ALLOWED_MODULES:
             normalized.add(module)
-    normalized.update(CORE_TECH_MODULES)
+    if not normalized:
+        normalized.update(CORE_TECH_MODULES)
     normalized.add("reviewer")
     return sorted(normalized)
 
@@ -211,6 +338,7 @@ TEMPLATE_MODULES_README = """# Modules
 
 def infer_detected_modules(code_dir: Path) -> list[str]:
     candidates = set()
+    candidates.update(infer_modules_from_code_signals(code_dir))
     lower_names = {p.name.lower() for p in code_dir.iterdir() if p.is_dir()}
 
     # Heuristics by common folder names
@@ -239,6 +367,61 @@ def infer_detected_modules(code_dir: Path) -> list[str]:
         candidates.add("ops")
 
     return sorted(candidates)
+
+
+def iter_infer_scan_files(code_dir: Path):
+    scanned = 0
+    for root, dirnames, filenames in os.walk(code_dir):
+        dirnames[:] = [name for name in sorted(dirnames) if name not in INFER_SCAN_IGNORE_DIRS]
+        for filename in sorted(filenames):
+            file_path = Path(root) / filename
+            suffix = file_path.suffix.lower()
+            if suffix not in INFER_SCAN_SUFFIXES and filename not in INFER_SCAN_FILENAMES:
+                continue
+            try:
+                if file_path.stat().st_size > INFER_SCAN_MAX_BYTES:
+                    continue
+            except OSError:
+                continue
+            yield file_path
+            scanned += 1
+            if scanned >= INFER_SCAN_MAX_FILES:
+                return
+
+
+def infer_modules_from_code_signals(code_dir: Path) -> set[str]:
+    scores = {module: 0 for module in OPTIONAL_TECH_MODULES + CORE_TECH_MODULES}
+    path_hits = {module: 0 for module in OPTIONAL_TECH_MODULES + CORE_TECH_MODULES}
+    for file_path in iter_infer_scan_files(code_dir):
+        try:
+            relative = "/" + file_path.relative_to(code_dir).as_posix().lower()
+        except ValueError:
+            continue
+
+        for module, path_patterns in MODULE_PATH_SIGNAL_PATTERNS.items():
+            if any(pattern in relative for pattern in path_patterns):
+                scores[module] += 1
+                path_hits[module] += 1
+
+        try:
+            text = file_path.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+        if not text:
+            continue
+        text_sample = text[:12000]
+        for module, content_patterns in MODULE_CODE_SIGNAL_PATTERNS.items():
+            if any(pattern in text_sample for pattern in content_patterns):
+                scores[module] += 1
+
+    detected = set()
+    for module, score in scores.items():
+        if score < 2:
+            continue
+        if module in OPTIONAL_TECH_MODULES and path_hits[module] == 0:
+            continue
+        detected.add(module)
+    return detected
 
 
 def infer_modules(code_dir: Path) -> list[str]:
@@ -334,8 +517,8 @@ def main():
     if multi_sources:
         modules = set()
         for source in multi_sources:
-            source_modules = source.get("modules") or infer_detected_modules(source["path"])
-            modules.update(source_modules)
+            # Always infer first-layer modules from source code structure.
+            modules.update(infer_detected_modules(source["path"]))
         modules = ensure_project_modules(modules)
     else:
         modules = infer_modules(code_dir)
