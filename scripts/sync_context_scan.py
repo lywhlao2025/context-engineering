@@ -1647,6 +1647,14 @@ def summarize_refs(refs: list[str], limit: int = 3) -> str:
     return ", ".join(refs[:limit]) + f", +{len(refs) - limit} more"
 
 
+def format_list(items: list[str], empty_message: str, *, quote: bool = True) -> list[str]:
+    if not items:
+        return [f"- {empty_message}"]
+    if not quote:
+        return [f"- {item}" for item in items]
+    return [f"- `{item}`" for item in items]
+
+
 def format_table_cell(value: str) -> str:
     if not value:
         return "-"
