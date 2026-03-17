@@ -12,6 +12,8 @@ Use this reference before finalizing a generated or synced project context.
 - Domain model snapshot is generated in `references/domain-model.md` and reviewed for obvious heuristic errors
 - Loading paths cover UI/UX, core logic, QA, release scenarios
 - Agent folders exist with clear responsibilities
+- Agent docs follow harness-style structure (scope/non-goals, execution loop, escalation conditions, verification hooks)
+- `scripts/validate_harness_contract.py --project-root <target_root>/projects/<project_name>` passes
 - Mandatory review completed after generation/sync
 - No unresolved placeholder `TODO` content in delivered context unless explicitly marked as pending
 - Runtime entrypoints are separated from build/config/release files

@@ -81,6 +81,7 @@ Use a two-stage model:
    - If PRD docs exist under `references/prd.md`, `references/requirements.md`, or `references/prd/*.md`, sync also refreshes `references/requirements-map.md` to trace requirement candidates to features/modules/code refs/tests.
    - Sync also refreshes `references/domain-model.md` with inferred entities, states, business rules, and requirement links at feature scope.
    - Sync also fills `agents/agents.md` plus each active agent's `README.md`, `tools.md`, and `memory.md`; agent docs must not stay as empty placeholders after generation.
+   - Sync performs a harness-contract schema gate for generated `agent-readme` / `agent-tools` / `agent-memory` AUTO blocks and fails fast when required sections or loop steps are missing.
    - If a managed `AUTO` block was edited manually after the last sync, the sync stops unless `--force-generated` is passed.
    - Record the review result with `--review-outcome` (`pending`, `pass`, `pass-with-findings`, `fail`) once the review pass is complete. Every sync with code changes resets the recorded outcome back to `pending` until a new review is recorded.
    - Treat the sync output as the default review plan input: `changed_paths`, `changed_modules`, `sync mode`, and `review scope`.
@@ -88,6 +89,7 @@ Use a two-stage model:
 5. **Review and extend content (mandatory)**
    - Fill `skill.md` (L1) with **project summary, architecture, agent routing, entrypoints, build/run, module navigation**.
    - Fill `agents/agents.md`, `agents/<agent>/README.md`, `agents/<agent>/tools.md`, and `agents/<agent>/memory.md` with non-placeholder content so the routed sub-agent can initialize with real project context.
+   - Agent docs must follow a harness-style contract: explicit scope + non-goals, deterministic loop (`observe -> plan -> act -> verify -> record`), escalation/stop conditions, and verification feedback hooks.
    - Load the task-matched agent first, then fill `modules/<module>/README.md` (overview) and `modules/<module>/<module>.md` (detail) through that agent's scope with code-derived summaries, not placeholder TODOs or path-only inventories.
    - When a technical module contains stable business features, also fill `modules/<module>/<feature>.md` as second-layer feature docs with code-derived summaries and representative references.
    - Fill `references/entrypoints.md`, `references/feature-map.md`, and (when PRD docs exist) `references/requirements-map.md` with code-level indexes and requirement trace mapping.
@@ -179,3 +181,4 @@ Keep `SKILL.md` lean. Load these references only when needed:
 
 - `scripts/init_context_project.py` — scaffold generator (preferred).
 - `scripts/sync_context_project.py` — sync generator for Git incremental / non-Git full refresh.
+- `scripts/validate_harness_contract.py` — standalone harness-contract validator for existing generated agent docs.

@@ -673,6 +673,16 @@ def agent_role(agent: str) -> str:
     return f"Acts as the first-stop sub-agent for `{agent}` work before deeper module detail is loaded."
 
 
+def agent_non_goals(agent: str) -> list[str]:
+    goals = [
+        "Do not assert behavior from filenames alone when line-level evidence is available.",
+        "Do not widen to unrelated modules without a concrete trigger from diff, runtime boundaries, or failing verification.",
+    ]
+    if agent == "reviewer":
+        goals.append("Do not rewrite large module docs unless a concrete inconsistency blocks review quality.")
+    return goals
+
+
 def agent_principles(agent: str) -> list[str]:
     principles = [
         "Start from the agent scope before loading deeper module detail.",
@@ -682,6 +692,75 @@ def agent_principles(agent: str) -> list[str]:
     if agent == "reviewer":
         principles.append("Prefer risk surfacing and boundary checks over rewriting large amounts of text.")
     return principles
+
+
+def agent_operating_invariants(agent: str) -> list[str]:
+    invariants = [
+        "Diff-first inspection before broad source reading whenever Git baseline is available.",
+        "Every meaningful claim should have at least one concrete file/symbol reference.",
+        "After each fix, run at least one scoped verification command before declaring progress.",
+        "Record durable decisions and repeated misses in system-of-record files, not transient chat context.",
+    ]
+    if agent == "reviewer":
+        invariants.append("Prioritize risk discovery and misleading context corrections over adding more narrative text.")
+    return invariants
+
+
+def agent_task_loop(agent: str) -> list[str]:
+    return [
+        "Observe: inspect current diff/sync scope, module roots, and relevant entrypoints.",
+        "Plan: define the smallest safe check/edit set and expected verification signal.",
+        "Act: execute scoped inspection or edits only inside the declared scope.",
+        "Verify: run targeted commands/tests and compare outputs against context claims.",
+        "Record: update findings, decisions, and unresolved risks with concrete evidence refs.",
+    ]
+
+
+def agent_escalation_triggers(agent: str) -> list[str]:
+    triggers = [
+        "Entrypoint-sensitive files changed while multiple runtime candidates exist.",
+        "Diff scope cannot be mapped cleanly to current module roots.",
+        "Verification output contradicts generated context claims.",
+        "High-impact changes touch release/data/security/test boundaries without sufficient evidence.",
+    ]
+    if agent == "reviewer":
+        triggers.append("Cross-module regressions or architecture drift are suspected from combined signals.")
+    return triggers
+
+
+def agent_system_of_record_paths(agent: str) -> list[str]:
+    paths = [layout.SKILL_FILENAME, layout.PROJECT_STATUS_FILENAME, layout.ENTRYPOINTS_FILENAME, layout.FEATURE_MAP_FILENAME]
+    if agent == "reviewer":
+        paths.extend(
+            [
+                layout.REQUIREMENTS_MAP_FILENAME,
+                layout.DOMAIN_MODEL_FILENAME,
+                layout.AGENTS_INDEX_FILENAME,
+            ]
+        )
+        mapped: list[str] = []
+        reference_files = {
+            layout.ENTRYPOINTS_FILENAME,
+            layout.FEATURE_MAP_FILENAME,
+            layout.REQUIREMENTS_MAP_FILENAME,
+            layout.DOMAIN_MODEL_FILENAME,
+        }
+        for path in paths:
+            if path in reference_files:
+                mapped.append(f"`{layout.REFERENCES_DIRNAME}/{path}`")
+            elif path == layout.AGENTS_INDEX_FILENAME:
+                mapped.append(f"`{layout.AGENTS_DIRNAME}/{path}`")
+            else:
+                mapped.append(f"`{path}`")
+        return mapped
+
+    return [
+        f"`{layout.relative_module_overview(agent)}`",
+        f"`{layout.relative_module_detail(agent)}`",
+        f"`{layout.REFERENCES_DIRNAME}/{layout.ENTRYPOINTS_FILENAME}`",
+        f"`{layout.REFERENCES_DIRNAME}/{layout.FEATURE_MAP_FILENAME}`",
+        f"`{layout.PROJECT_STATUS_FILENAME}`",
+    ]
 
 
 def agent_deliverables(agent: str) -> list[str]:
@@ -720,9 +799,28 @@ def generate_agents_index_block(modules: list[str], module_map: dict[str, list[s
 def generate_agent_readme_block(agent: str, code_dir: Path, module_map: dict[str, list[str]]) -> str:
     scope_paths = agent_scope_paths(agent, module_map)
     evidence_refs = limited_paths(module_line_refs(code_dir, scope_paths))
+    scope_line = (
+        ", ".join(f"`{path}`" for path in limited_paths(scope_paths))
+        if scope_paths
+        else "No stable code roots were inferred automatically for this agent."
+    )
     lines = [
         "## Generated Agent Profile",
         f"- Role: {agent_role(agent)}",
+        "",
+        "## Harness Contract",
+        f"- Scope boundary: {scope_line}",
+        "- Non-goals:",
+        *[f"- {item}" for item in agent_non_goals(agent)],
+        "",
+        "## Operating Invariants",
+        *[f"- {item}" for item in agent_operating_invariants(agent)],
+        "",
+        "## Task Loop (Observe -> Plan -> Act -> Verify -> Record)",
+        *[f"- {item}" for item in agent_task_loop(agent)],
+        "",
+        "## Escalation And Stop Conditions",
+        *[f"- {item}" for item in agent_escalation_triggers(agent)],
         "",
         "## Principles",
         *[f"- {item}" for item in agent_principles(agent)],
@@ -736,6 +834,9 @@ def generate_agent_readme_block(agent: str, code_dir: Path, module_map: dict[str
         "## Working Style",
         f"- Start with `{layout.AGENT_README_FILENAME}`, load `{layout.AGENT_TOOLS_FILENAME}` and `{layout.AGENT_MEMORY_FILENAME}` only when needed, then move into the module docs and any matching feature docs.",
         "- Keep the review scoped to the mapped module roots unless the diff or evidence says that is unsafe.",
+        "",
+        "## System Of Record",
+        *format_list(agent_system_of_record_paths(agent), "No system-of-record paths were inferred automatically.", quote=False),
         "",
         "## Scope Evidence",
         *format_list(evidence_refs, "No representative symbol-level evidence was discovered automatically.", quote=False),
@@ -761,14 +862,21 @@ def generate_agent_tools_block(agent: str, code_dir: Path, module_map: dict[str,
         test_refs = limited_paths(line_refs_for_paths(code_dir, module_test_paths(code_dir, scope_paths)))
     lines = [
         "## Generated Tools Guide",
+        "- Harness tooling surface (scoped first, then broaden only when escalation triggers fire).",
         "- Preferred commands:",
         *format_list(commands, "No common commands discovered automatically."),
+        "- Verification loop:",
+        "- Run the smallest scoped check first, then widen only if signals are inconclusive.",
+        "- Re-run at least one relevant command after each material edit.",
         "- Command manifest evidence:",
         *format_list(manifest_refs, "No build or runtime manifests discovered automatically.", quote=False),
         "- Entrypoint evidence:",
         *format_list(entrypoint_refs, "No scoped entrypoint evidence discovered automatically.", quote=False),
         "- Testing evidence:",
         *format_list(test_refs, "No scoped testing evidence discovered automatically.", quote=False),
+        "- Feedback hooks:",
+        f"- Record durable corrections in `{layout.AGENT_DECISIONS_FILENAME}` or `{layout.DECISIONS_FILENAME}`.",
+        f"- Record repeated misses in `{layout.AGENT_FAILS_FILENAME}` so future runs can avoid them.",
     ]
     return "\n".join(lines)
 
@@ -776,6 +884,10 @@ def generate_agent_tools_block(agent: str, code_dir: Path, module_map: dict[str,
 def generate_agent_memory_block(agent: str, code_dir: Path, module_map: dict[str, list[str]]) -> str:
     scope_paths = agent_scope_paths(agent, module_map)
     evidence_refs = limited_paths(module_line_refs(code_dir, scope_paths))
+    if agent == "reviewer":
+        entrypoint_refs = limited_paths(line_refs_for_paths(code_dir, entrypoint_candidates(code_dir)))
+    else:
+        entrypoint_refs = limited_paths(line_refs_for_paths(code_dir, module_entrypoints(code_dir, scope_paths)))
     adjacent_modules = [
         name
         for name, paths in sorted(module_map.items())
@@ -793,10 +905,14 @@ def generate_agent_memory_block(agent: str, code_dir: Path, module_map: dict[str
         [
             "- Adjacent modules:",
             *format_list(adjacent_modules[:4], "No adjacent modules inferred yet."),
+            "- System-of-record docs:",
+            *format_list(agent_system_of_record_paths(agent), "No system-of-record docs inferred automatically.", quote=False),
+            "- Drift watchlist (entrypoint/runtime-sensitive refs):",
+            *format_list(entrypoint_refs, "No runtime-sensitive refs inferred automatically.", quote=False),
             "- Re-entry evidence:",
             *format_list(evidence_refs, "No representative evidence recorded automatically.", quote=False),
             "- Escalation triggers:",
-            "- Widen review when entrypoint-sensitive files change or when the diff no longer maps cleanly to this agent scope.",
+            *[f"- {item}" for item in agent_escalation_triggers(agent)],
             "- Record durable decisions outside this AUTO block in `decisions.jsonl` or the project-level `decisions.md`.",
         ]
     )

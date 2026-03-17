@@ -48,3 +48,8 @@ Use this reference when you need the detailed project-context structure rules fo
   - `decisions.jsonl` (JSONL, one decision per line)
   - `fails.jsonl` (JSONL, one failure per line)
 - `README.md` must also include a brief description of the purpose of other files in the current agent directory.
+- Agent docs should follow a harness-style contract:
+  - Explicit scope boundary and non-goals
+  - Deterministic task loop (`observe -> plan -> act -> verify -> record`)
+  - Clear escalation/stop conditions for ambiguity and risk
+  - Verification and feedback-loop hooks tied to concrete commands/evidence

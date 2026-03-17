@@ -540,17 +540,33 @@ def main():
             layout.agent_readme_path(project_root, agent),
             (
                 f"# {agent.title()} — {agent.title()} Agent\n\n"
+                "## Harness Contract\n"
+                "- Define scope boundary and explicit non-goals.\n"
+                "- Use loop: observe -> plan -> act -> verify -> record.\n\n"
+                "## Escalation And Stop Conditions\n"
+                "- Document when to widen scope and when to hand off to human judgment.\n\n"
+                "## Notes\n"
                 "Keep durable manual notes outside the managed AUTO block.\n"
                 "Run `scripts/sync_context_project.py` to generate the initial agent profile.\n"
             ),
         )
         write_if_missing(
             layout.agent_tools_path(project_root, agent),
-            "# Tools\n\n- Managed AUTO content is populated by sync.\n- Add durable manual tool notes outside the AUTO block.\n",
+            (
+                "# Tools\n\n"
+                "- Managed AUTO content is populated by sync.\n"
+                "- Keep command guidance tied to verification loops and concrete evidence.\n"
+                "- Add durable manual tool notes outside the AUTO block.\n"
+            ),
         )
         write_if_missing(
             layout.agent_memory_path(project_root, agent),
-            "# Memory\n\n- Managed AUTO content is populated by sync.\n- Add durable manual memory notes outside the AUTO block.\n",
+            (
+                "# Memory\n\n"
+                "- Managed AUTO content is populated by sync.\n"
+                "- Record stable scope roots, system-of-record pointers, and recurring failure patterns.\n"
+                "- Add durable manual memory notes outside the AUTO block.\n"
+            ),
         )
         write_if_missing(layout.agent_decisions_path(project_root, agent), "")
         write_if_missing(layout.agent_fails_path(project_root, agent), "")

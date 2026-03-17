@@ -16,6 +16,33 @@ from pathlib import Path
 from sync_context_generation import *  # noqa: F401,F403
 from sync_context_scan import *  # noqa: F401,F403
 
+HARNESS_REQUIRED_MARKERS_BY_BLOCK = {
+    "agent-readme": [
+        "## Harness Contract",
+        "## Operating Invariants",
+        "## Task Loop (Observe -> Plan -> Act -> Verify -> Record)",
+        "## Escalation And Stop Conditions",
+        "## System Of Record",
+    ],
+    "agent-tools": [
+        "- Harness tooling surface",
+        "- Verification loop:",
+        "- Feedback hooks:",
+    ],
+    "agent-memory": [
+        "- System-of-record docs:",
+        "- Drift watchlist",
+        "- Escalation triggers:",
+    ],
+}
+HARNESS_REQUIRED_LOOP_STEPS = (
+    "- Observe:",
+    "- Plan:",
+    "- Act:",
+    "- Verify:",
+    "- Record:",
+)
+
 
 def build_updates(
     project_root: Path,
@@ -182,6 +209,22 @@ def apply_updates(project_root: Path, updates: list[tuple[Path, str, str]]) -> d
         relative_doc_path = file_path.relative_to(project_root).as_posix()
         generated_hashes[auto_block_key(relative_doc_path, block_name)] = sha256_text(content.rstrip())
     return generated_hashes
+
+
+def validate_harness_contract_updates(updates: list[tuple[Path, str, str]]) -> list[str]:
+    violations: list[str] = []
+    for file_path, block_name, content in updates:
+        required_markers = HARNESS_REQUIRED_MARKERS_BY_BLOCK.get(block_name)
+        if not required_markers:
+            continue
+        for marker in required_markers:
+            if marker not in content:
+                violations.append(f"{file_path} [{block_name}] missing required marker: {marker}")
+        if block_name == "agent-readme":
+            for step in HARNESS_REQUIRED_LOOP_STEPS:
+                if step not in content:
+                    violations.append(f"{file_path} [{block_name}] missing required loop step: {step}")
+    return violations
 
 
 def determine_sync_mode(
@@ -649,6 +692,17 @@ def main() -> None:
         review_record,
         multi_git_meta,
     )
+    harness_violations = validate_harness_contract_updates(updates)
+    if harness_violations:
+        sample = "\n".join(f"- {item}" for item in harness_violations[:20])
+        remainder = len(harness_violations) - min(len(harness_violations), 20)
+        if remainder > 0:
+            sample += f"\n- ... and {remainder} more"
+        raise SyncError(
+            "Harness contract validation failed for generated agent docs. "
+            "Fix generator output before sync can continue.\n"
+            f"{sample}"
+        )
 
     conflicts = detect_auto_conflicts(
         project_root,
