@@ -156,7 +156,7 @@ def build_updates(
             (
                 layout.module_detail_path(project_root, module),
                 "module-detail",
-                generate_module_detail_block(module, module_paths, profile, module_map, module_features),
+                generate_module_detail_block(module, code_dir, module_paths, profile, module_map, module_features),
             )
         )
         for feature in feature_targets.get(module, []):

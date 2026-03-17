@@ -135,6 +135,14 @@ DEFAULT_MODULE_PATHS = {
     "data": ["data", "analytics", "ml", "model", "models"],
     "ops": ["ops", "infra", "devops", "deploy", "helm", "k8s", "terraform"],
 }
+MODULE_RUNTIME_ROOT_PREFERENCES = {
+    "frontend": ("src", "app", "web", "client", "ui", "pages", "packages"),
+    "backend": ("src/main", "src", "app", "server", "api", "services", "cmd"),
+}
+MODULE_RUNTIME_LOCK_SEGMENTS = {
+    "frontend": {"src", "app", "web", "client", "ui", "pages", "packages"},
+    "backend": {"src", "main", "app", "server", "api", "services", "cmd"},
+}
 ENTRYPOINT_FILE_NAMES = {
     "main.py",
     "main.ts",
@@ -402,6 +410,7 @@ MODULE_CATEGORY_KEYWORDS = {
     },
     "backend": {
         "http": ("route", "routes", "router", "routers", "controller", "controllers", "handler", "handlers", "endpoint", "endpoints", "api"),
+        "rpc": ("rpc", "grpc", "thrift", "protobuf", "proto", "idl", "stub", "stubs", "serviceclient", "clientstub", "serverstub"),
         "service": ("service", "services", "usecase", "usecases", "use-case", "domain", "logic"),
         "data": ("repo", "repository", "repositories", "dao", "model", "models", "schema", "schemas", "entity", "entities", "db", "database", "migration", "migrations", "sql", "prisma", "orm"),
         "job": ("worker", "workers", "job", "jobs", "queue", "queues", "task", "tasks", "cron", "scheduler"),
@@ -447,6 +456,7 @@ MODULE_CATEGORY_LABELS = {
     },
     "backend": {
         "http": "HTTP/API entrypoints and request handlers",
+        "rpc": "RPC/IDL service entrypoints and transport adapters",
         "service": "Business logic and orchestration services",
         "data": "Persistence, schema, and data access code",
         "job": "Background jobs and async processing",
@@ -494,6 +504,8 @@ MODULE_FRAMEWORK_PATTERNS = {
         "Flask": ("from flask", "flask(", "@app.route"),
         "Spring": ("@restcontroller", "@controller", "@service", "@repository"),
         "NestJS": ("@nestjs/", "@controller(", "@injectable("),
+        "gRPC/Protobuf": ("grpc", "protobuf", ".proto"),
+        "Thrift": ("thrift", ".thrift"),
         "Prisma": ("prisma", "schema.prisma"),
         "SQLAlchemy": ("sqlalchemy", "declarative_base", "sessionmaker"),
     },
@@ -908,6 +920,35 @@ def classify_top_level_path(path: Path, modules: list[str], has_frontend_manifes
     return []
 
 
+def refine_module_roots(code_dir: Path, module: str, roots: list[str]) -> list[str]:
+    if module not in MODULE_RUNTIME_ROOT_PREFERENCES:
+        return sorted(dict.fromkeys(roots))
+
+    preferred_children = MODULE_RUNTIME_ROOT_PREFERENCES[module]
+    lock_segments = MODULE_RUNTIME_LOCK_SEGMENTS[module]
+    refined: list[str] = []
+    for root in roots:
+        root_path = code_dir / root
+        if not root_path.is_dir():
+            refined.append(root)
+            continue
+
+        root_parts = {part.lower() for part in PurePosixPath(root).parts}
+        if root_parts & lock_segments:
+            refined.append(root)
+            continue
+
+        selected: str | None = None
+        for child in preferred_children:
+            candidate = root_path / child
+            if not candidate.exists():
+                continue
+            selected = f"{root.rstrip('/')}/{child}" if root and root != "." else child
+            break
+        refined.append(selected or root)
+    return sorted(dict.fromkeys(refined))
+
+
 def discover_module_map(code_dir: Path, modules: list[str]) -> tuple[dict[str, list[str]], list[str], list[str]]:
     module_map = {module: [] for module in modules if module != "reviewer"}
     global_paths: list[str] = []
@@ -942,17 +983,17 @@ def discover_module_map(code_dir: Path, modules: list[str]) -> tuple[dict[str, l
     for module, candidates in DEFAULT_MODULE_PATHS.items():
         if module not in module_map:
             continue
-        if module_map[module]:
-            continue
-        for candidate in candidates:
-            candidate_path = code_dir / candidate
-            if candidate_path.exists():
-                module_map[module].append(candidate)
-        if not module_map[module] and module in {"frontend", "backend"} and (code_dir / "src").exists():
-            if module == "frontend" and has_frontend_manifest and not has_backend_manifest:
-                module_map[module].append("src")
-            elif module == "backend" and has_backend_manifest and not has_frontend_manifest:
-                module_map[module].append("src")
+        if not module_map[module]:
+            for candidate in candidates:
+                candidate_path = code_dir / candidate
+                if candidate_path.exists():
+                    module_map[module].append(candidate)
+            if not module_map[module] and module in {"frontend", "backend"} and (code_dir / "src").exists():
+                if module == "frontend" and has_frontend_manifest and not has_backend_manifest:
+                    module_map[module].append("src")
+                elif module == "backend" and has_backend_manifest and not has_frontend_manifest:
+                    module_map[module].append("src")
+        module_map[module] = refine_module_roots(code_dir, module, module_map[module])
 
     normalized_map = {
         module: sorted(dict.fromkeys(paths))

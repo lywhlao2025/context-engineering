@@ -130,6 +130,127 @@ def docs_paths(code_dir: Path) -> list[str]:
     return matches
 
 
+BACKEND_CORE_FLOW_KEYWORDS = {
+    "http": (
+        "@requestmapping",
+        "@getmapping",
+        "@postmapping",
+        "@putmapping",
+        "@deletemapping",
+        "@restcontroller",
+        "@controller",
+        "@router.",
+        "@app.route",
+        "express.router",
+        "route(",
+        "controller",
+        "handler",
+        "http",
+        "api",
+    ),
+    "rpc": (
+        "thrift",
+        ".thrift",
+        "grpc",
+        ".proto",
+        "protobuf",
+        "idl",
+        "rpc",
+        "processor",
+        "stub",
+        "transport",
+        "serviceclient",
+    ),
+    "job": (
+        "@scheduled",
+        "cron",
+        "scheduler",
+        "job",
+        "queue",
+        "worker",
+        "consumer",
+        "listener",
+        "task",
+        "pipeline",
+    ),
+    "service": (
+        "@service",
+        "service",
+        "usecase",
+        "domain",
+        "manager",
+        "orchestr",
+    ),
+    "data": (
+        "@repository",
+        "repository",
+        "dao",
+        "mapper",
+        "sql",
+        "jdbc",
+        "mybatis",
+        "jpa",
+        "prisma",
+        "orm",
+        "schema",
+        "migration",
+        "redis",
+    ),
+    "output": (
+        "response",
+        "stream",
+        "event",
+        "publisher",
+        "producer",
+        "send",
+        "emit",
+        "return",
+        "webhook",
+        "notification",
+    ),
+}
+
+
+def backend_flow_hits(relative_path: str, lines: list[str]) -> set[str]:
+    probe = normalize_match_text(relative_path + "\n" + "\n".join(lines[:220]))
+    hits: set[str] = set()
+    for flow_type, keywords in BACKEND_CORE_FLOW_KEYWORDS.items():
+        for keyword in keywords:
+            normalized_keyword = normalize_match_text(keyword)
+            if normalized_keyword and normalized_keyword in probe:
+                hits.add(flow_type)
+                break
+    return hits
+
+
+def collect_backend_flow_refs(code_dir: Path, module_paths: list[str]) -> dict[str, list[str]]:
+    scoped_files = module_scoped_files(code_dir, module_paths)
+    if not scoped_files:
+        return {}
+
+    buckets: dict[str, list[str]] = defaultdict(list)
+    inspected = 0
+    for relative_path in prioritize_summary_paths("backend", scoped_files):
+        if inspected >= MAX_SUMMARY_SCAN_FILES:
+            break
+        if not should_scan_summary_file(relative_path):
+            continue
+        try:
+            lines = (code_dir / relative_path).read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            continue
+        inspected += 1
+        for flow_type in backend_flow_hits(relative_path, lines):
+            if len(buckets[flow_type]) < MAX_SUMMARY_REFS * 2:
+                buckets[flow_type].append(relative_path)
+
+    return {
+        flow_type: line_refs_for_paths(code_dir, paths, MAX_SUMMARY_REFS)
+        for flow_type, paths in buckets.items()
+        if paths
+    }
+
+
 def module_entrypoints(code_dir: Path, module_paths: list[str]) -> list[str]:
     if not module_paths:
         return []
@@ -309,6 +430,89 @@ def format_inline_refs(refs: list[str]) -> str:
     if not refs:
         return ""
     return ", ".join(refs[:MAX_SUMMARY_REFS])
+
+
+def first_ref(*ref_groups: list[str]) -> str | None:
+    for refs in ref_groups:
+        if refs:
+            return refs[0]
+    return None
+
+
+def compose_flow_line(label: str, input_ref: str | None, processing_ref: str | None, output_ref: str | None) -> str | None:
+    stages: list[str] = []
+    if input_ref:
+        stages.append(f"input {input_ref}")
+    if processing_ref:
+        stages.append(f"processing {processing_ref}")
+    if output_ref:
+        stages.append(f"output {output_ref}")
+    if len(stages) < 2:
+        return None
+    return f"- {label}: " + " -> ".join(stages) + "."
+
+
+def backend_core_flow_lines(code_dir: Path, module_paths: list[str], profile: ModuleProfile) -> list[str]:
+    flow_refs = collect_backend_flow_refs(code_dir, module_paths)
+    http_refs = flow_refs.get("http", []) or profile.category_refs.get("http", [])
+    rpc_refs = flow_refs.get("rpc", [])
+    job_refs = flow_refs.get("job", []) or profile.category_refs.get("job", [])
+    service_refs = profile.category_refs.get("service", []) or flow_refs.get("service", [])
+    data_refs = profile.category_refs.get("data", []) or flow_refs.get("data", [])
+    output_refs = flow_refs.get("output", [])
+    integration_refs = profile.category_refs.get("integration", [])
+    auth_refs = profile.category_refs.get("auth", [])
+
+    lines: list[str] = []
+    if http_refs:
+        http_line = compose_flow_line(
+            "HTTP/API flow",
+            first_ref(http_refs),
+            first_ref(service_refs, integration_refs, auth_refs, data_refs),
+            first_ref(output_refs, data_refs, integration_refs),
+        )
+        if http_line:
+            lines.append(http_line)
+
+    if rpc_refs:
+        rpc_line = compose_flow_line(
+            "RPC/IDL flow (including gRPC/Thrift when present)",
+            first_ref(rpc_refs),
+            first_ref(service_refs, integration_refs, auth_refs, data_refs),
+            first_ref(output_refs, data_refs, integration_refs),
+        )
+        if rpc_line:
+            lines.append(rpc_line)
+
+    if job_refs:
+        job_line = compose_flow_line(
+            "Async job/queue flow",
+            first_ref(job_refs),
+            first_ref(service_refs, integration_refs, data_refs),
+            first_ref(output_refs, data_refs, integration_refs),
+        )
+        if job_line:
+            lines.append(job_line)
+
+    if lines:
+        return lines
+
+    fallback_line = compose_flow_line(
+        "Fallback runtime flow",
+        first_ref(profile.entrypoints, http_refs, rpc_refs, job_refs),
+        first_ref(service_refs, integration_refs, auth_refs, data_refs),
+        first_ref(output_refs, data_refs, integration_refs),
+    )
+    if fallback_line:
+        return [fallback_line]
+
+    return ["- No stable runtime flow chain was inferred automatically; add manual flow notes when runtime wiring is implicit."]
+
+
+def module_core_flow_lines(module: str, code_dir: Path, module_paths: list[str], profile: ModuleProfile) -> list[str]:
+    if module == "backend":
+        return backend_core_flow_lines(code_dir, module_paths, profile)
+    return []
 
 
 def build_module_profile(module: str, code_dir: Path, module_paths: list[str]) -> ModuleProfile:
@@ -1129,12 +1333,14 @@ def generate_module_overview_block(
 
 def generate_module_detail_block(
     module: str,
+    code_dir: Path,
     module_paths: list[str],
     profile: ModuleProfile,
     module_map: dict[str, list[str]],
     module_features: dict[str, list[str]],
 ) -> str:
     sibling_modules = [name for name, paths in module_map.items() if name != module and paths]
+    core_flow_lines = module_core_flow_lines(module, code_dir, module_paths, profile)
     lines = [
         "## Generated Code Summary",
         "- Content inside this AUTO block is managed by `scripts/sync_context_project.py`.",
@@ -1171,6 +1377,18 @@ def generate_module_detail_block(
             "### Runtime And Tests",
             "- Candidate entrypoints with symbol evidence (line hint when available):",
             *format_list(profile.entrypoints, "No common entrypoint line references discovered inside this module.", quote=False),
+        ]
+    )
+    if core_flow_lines:
+        lines.extend(
+            [
+                "",
+                "### Core Flows",
+                *core_flow_lines,
+            ]
+        )
+    lines.extend(
+        [
             "",
             "### Testing Hooks",
             *format_list(profile.tests, "No module-local test evidence discovered automatically.", quote=False),
