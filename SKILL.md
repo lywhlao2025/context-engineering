@@ -1,184 +1,129 @@
 ---
-name: context-enggineering-skill
-description: Build or initialize team-style project context directories for context engineering. Use when the user says “构建/初始化项目上下文”, “针对该项目构建上下文”, **or** in English phrases like “build/initialize project context”, “scaffold project context”, “set up project context docs”, “create project context”, “generate project context docs”, “initialize context engineering project”, “set up team context”, “build context workspace”, or asks to scaffold a project context under a specified target directory (default ~/clawDir/team).
+name: context-harness-engineering
+description: Intent-driven end-to-end skill for existing repositories. Use when the user says natural-language goals like “我想完成XX功能” / “implement feature X”. The skill must automatically run three stages in order: (1) Context Engineering to build/sync project context, (2) OpenSpec to define change scope and acceptance, (3) Harness Engineering to implement and harden with executable checks and CI gates. Do not require users to run `/opsx:*` commands manually.
 ---
 
-# context-enggineering-skill
+# Context Harness Engineering
 
-## Overview
+## Single User Entry (Only)
+Accept one input style from users:
+- Natural-language intent, e.g. `我想完成xx功能`.
 
-Create a consistent project context structure (team navigation + project folder) and link it to a code directory. Default target root is `~/clawDir/team`, but allow the user to specify another root path.
+Do not ask users to run OpenSpec command sequences manually.
 
-Use a two-stage model:
+### Trigger Guardrails
+Trigger this skill only when the user intent implies software feature delivery or codebase change.
+Do NOT trigger for pure Q&A, non-technical chat, or tasks without repository impact.
+If intent is ambiguous, ask one clarification question before starting the pipeline.
 
-- `scripts/init_context_project.py` creates missing scaffold files and folders only.
-- `scripts/sync_context_project.py` refreshes generated context content after the scaffold exists.
-- Generation is not complete until the generated context has been reviewed with a **Git-first** workflow and obvious issues have been fixed or explicitly called out.
+## Internal Pipeline (Always this order)
 
-## Loading Model (L1/L2/L3)
+### Stage 1 — Context Engineering (Foundation First)
+1. Build/sync project context workspace.
+2. Identify modules, entrypoints, agent routing, and current constraints.
+3. Produce a reliable execution context before any spec planning.
 
-- **L1**: Project `skill.md` — global overview, routing rules, loading order, and environment notes.
-- **L2**: `agents/` and module overview files such as `modules/<module>/README.md` — choose the task-matched agent first, then let that agent load the relevant module overview before going deeper.
-- **L3**: module detail files such as `modules/<module>/<module>.md`, feature files such as `modules/<module>/<feature>.md`, and detailed `references/*` — load these only after the agent has selected the relevant module scope.
+Use:
+```bash
+python3 scripts/init_context_project.py --project <project> --code-dir <repo> [--target-root <root>]
+python3 scripts/sync_context_project.py --project <project> --code-dir <repo> [--target-root <root>]
+```
 
-### Preferred Load Order
+### Stage 2 — OpenSpec (Scope Definition)
+1. Convert user intent into behavior-first change scope.
+2. Define proposal/spec/design/tasks under OpenSpec artifact model.
+3. Set explicit acceptance boundaries (in-scope / out-of-scope).
 
-1. Load project `skill.md`.
-2. Route the task to the relevant agent under `agents/<agent>/`.
-3. Load that agent's `README.md` first, then `tools.md` and `memory.md` if needed.
-4. Let the active agent choose which module to inspect.
-5. Load `modules/<module>/README.md` as the module overview layer.
-6. Load `modules/<module>/<module>.md`, then the matching `modules/<module>/<feature>.md` files when stable business subdomains exist, then `references/*` for evidence-level checks.
+Rules:
+- `openspec/specs/` = current behavior source of truth.
+- `openspec/changes/<change>/` = proposed delta.
+- Keep specs behavior-first, not implementation-first.
 
-## Workflow
+### Stage 2.5 — Scope Gate
+Before implementation, classify scope risk:
 
-1. **Collect inputs**
-   - `project_name` (folder name)
-   - Source input: either `code_dir` (absolute path to the code) or `git_url` (Git URL or local Git repo path to clone)
-   - `target_root` (optional). If not provided, use `~/clawDir/team`.
+- Low-risk: proceed automatically.
+- Medium/High-risk (schema changes, data migration, auth/payment, destructive ops): require explicit user confirmation of scope.
 
-2. **Analyze the code structure**
-   - If `git_url` is provided, prepare a managed checkout under `<target_root>/sources/<project_name>` before analysis.
-   - First build or missing sync state: identify tech stack and main areas (frontend/backend/qa/etc.) from code directory structure and key files.
-   - Existing Git-backed context: start from Git diff/tree first; do **not** broad-read the source tree before you know the changed scope.
-   - Read top-level docs such as `README*`, `docs/`, `tech.md`, `architecture.md`, `CHANGELOG*` when bootstrapping a project or when a broad review trigger fires.
-   - Infer the available project agents and modules, then route the task to the best-fit agent before loading module docs.
-   - When inspecting source files, analyze code at the line level inside the selected scope. Do not infer behavior only from directory names, filenames, or headings.
+Never auto-implement high-risk scope without confirmation.
 
-3. **Initialize the context structure**
-   - Prefer running the bundled script:
-     ```bash
-     python scripts/init_context_project.py \
-       --project <project_name> \
-       --code-dir <code_dir> | --git-url <git_url> \
-       --target-root <target_root>
-     ```
-   - The script infers technical module buckets from the codebase and creates module folders dynamically.
-   - First-layer modules must stay technical (`frontend`/`backend` are fallback baseline buckets, optional `qa`/`mobile`/`data`/`ops`). Stable business slices belong to second-layer feature docs under those folders (for example `modules/frontend/new-sign.md`, `modules/backend/renewal.md`).
-   - For multi-source configs, `context-sources.json` `modules` values are validation-only and must be technical buckets; they do not override code-inferred first-layer modules. Business module names are rejected and should be represented as second-layer feature docs.
-   - If `git_url` is used, the script clones the repo into `<target_root>/sources/<project_name>` and analyzes that managed checkout.
-   - The script is idempotent: it won’t overwrite existing files.
+### Stage 3 — Harness Engineering (Implementation + Governance)
+1. Implement code changes according to approved scope.
+2. Add/update repo-local governance artifacts as needed.
+3. Enforce executable checks and CI gates.
+4. Validate and report pass/fail/risk.
 
-4. **Sync generated context content**
-   - Prefer running the bundled script:
-     ```bash
-     python scripts/sync_context_project.py \
-       --project <project_name> \
-       --code-dir <code_dir> | --git-url <git_url> \
-       --target-root <target_root>
-     ```
-   - If `git_url` is used, the script refreshes the managed checkout under `<target_root>/sources/<project_name>` before diffing.
-   - `--dry-run` with `git_url` requires an existing managed checkout; it must not clone or fetch sources.
-   - `Git` project: sync only from a clean checked-out default branch (`main` or `master`).
-   - Incremental sync compares the current default-branch `HEAD` against the last successful sync head recorded for that same local default branch.
-   - Non-`Git` project: full sync only.
-   - If the checked-out branch is not `main` or `master`, stop and ask the user to switch to the default branch before syncing.
-   - If the worktree is not clean, stop and ask the user to commit, stash, or remove local changes before syncing.
-   - If the sync state is missing, invalid, the previous sync head is not usable on the current default branch, or the module map changed, the sync falls back to a full refresh.
-   - Once a project context exists, keep it bound to the same source. If the user wants to analyze a different repo, use a new `project_name`.
-   - Sync only updates managed `AUTO` blocks. Manual notes outside those blocks are preserved.
-   - Sync may generate `modules/<module>/<feature>.md` when the module contains stable business subdomains with code evidence, and it also refreshes `references/feature-map.md` to connect matching features across technical modules.
-   - If PRD docs exist under `references/prd.md`, `references/requirements.md`, or `references/prd/*.md`, sync also refreshes `references/requirements-map.md` to trace requirement candidates to features/modules/code refs/tests.
-   - Sync also refreshes `references/domain-model.md` with inferred entities, states, business rules, and requirement links at feature scope.
-   - Sync also fills `agents/agents.md` plus each active agent's `README.md`, `tools.md`, and `memory.md`; agent docs must not stay as empty placeholders after generation.
-   - Sync performs a harness-contract schema gate for generated `agent-readme` / `agent-tools` / `agent-memory` AUTO blocks and fails fast when required sections or loop steps are missing.
-   - If a managed `AUTO` block was edited manually after the last sync, the sync stops unless `--force-generated` is passed.
-   - Record the review result with `--review-outcome` (`pending`, `pass`, `pass-with-findings`, `fail`) once the review pass is complete. Every sync with code changes resets the recorded outcome back to `pending` until a new review is recorded.
-   - Treat the sync output as the default review plan input: `changed_paths`, `changed_modules`, `sync mode`, and `review scope`.
+Minimum governance outcomes:
+- No policy-only claims without executable enforcement.
+- Run at least: lint, tests, type/build checks (or project equivalents).
+- CI gate must cover the same required checks on push/PR.
+- Critical references/contracts are not stale.
+- Record command results in the final verification summary.
 
-5. **Review and extend content (mandatory)**
-   - Fill `skill.md` (L1) with **project summary, architecture, agent routing, entrypoints, build/run, module navigation**.
-   - Fill `agents/agents.md`, `agents/<agent>/README.md`, `agents/<agent>/tools.md`, and `agents/<agent>/memory.md` with non-placeholder content so the routed sub-agent can initialize with real project context.
-   - Agent docs must follow a harness-style contract: explicit scope + non-goals, deterministic loop (`observe -> plan -> act -> verify -> record`), escalation/stop conditions, and verification feedback hooks.
-   - Load the task-matched agent first, then fill `modules/<module>/README.md` (overview) and `modules/<module>/<module>.md` (detail) through that agent's scope with code-derived summaries, not placeholder TODOs or path-only inventories.
-   - When a technical module contains stable business features, also fill `modules/<module>/<feature>.md` as second-layer feature docs with code-derived summaries and representative references.
-   - Fill `references/entrypoints.md`, `references/feature-map.md`, and (when PRD docs exist) `references/requirements-map.md` with code-level indexes and requirement trace mapping.
-   - Review `references/domain-model.md` and move durable corrections/clarifications to manual notes outside AUTO blocks when heuristics are incomplete.
-   - Important technical claims must come from code-level inspection inside the chosen scope, with file/symbol evidence (line hints when available), not just file-name or folder-name inference.
-   - Follow this review order strictly:
-     1. Inspect Git diff/tree or the sync output first.
-     2. Route to the relevant agent, then spot-check only the modules hit by the diff.
-     3. Broaden to a wider source review only when one of these triggers fires:
-        - first context build / no previous sync state
-        - module map changed
-        - runtime entrypoint judgment is ambiguous
-        - the existing context does not match the diff scope
-        - non-Git repo, because no diff baseline exists
-   - If sync reports `Review scope: noop`, do not re-read source files.
-   - In targeted review mode, at minimum review only the diff-hit scope for:
-     - runtime entrypoints vs build/config files inside the changed scope
-     - module boundaries vs actual functional boundaries inside the changed scope
-     - QA/test/release/storage/i18n coverage touched by the diff
-     - inconsistencies between manual notes and generated `AUTO` blocks for the changed scope
-     - obvious stale status fields such as `project_status.md`
-   - In broad review mode, expand the same checks to the wider source tree.
-   - Fix clear issues immediately. If an issue cannot be fixed safely in the current turn, report it explicitly as a review finding.
+## Output Contract (User-visible)
+After pipeline execution, always return:
+1. Scope summary (in-scope / out-of-scope).
+2. Implementation evidence (touched files/modules + key intent per change cluster).
+3. Verification evidence (commands run + pass/fail + CI status).
+4. Risks, blockers, and smallest next retry scope.
 
-6. **Post-review checks**
-   - Verify the created files exist and are filled under: `<target_root>/projects/<project_name>/`.
-   - Re-run sync if review-driven edits changed managed generation rules or `AUTO` content.
-   - If the user wants custom content, update modules and references accordingly.
-   - Record major changes in `decisions.md` (project-level) or `decisions.jsonl` (agent-level).
+## Execution Example (Intent-driven)
+### User input
+`我想完成“用户可切换深色模式”功能。`
 
-## Sync Model
+### Internal execution (automatic)
+1. Context stage: build/sync context, identify affected modules (e.g., frontend theme system, settings, persistence).
+2. OpenSpec stage: define change boundary, acceptance criteria, and task breakdown.
+3. Harness stage: implement code + update repo-local docs/checks + run validation/CI checks.
 
-- Sync state lives at `<target_root>/projects/<project_name>/.context-sync/state.json`.
-- The state file records the last successful sync snapshot, module map, watched global paths, hashes for generated `AUTO` blocks, the last synced default-branch head, and source metadata.
-- The state file also records the latest review outcome. Use `pending` until an explicit `pass`, `pass with findings`, or `fail` review result has been recorded for the current sync.
-- Incremental sync is attempted only for `Git` projects with a valid state file and a clean checked-out default branch (`main` or `master`).
-- Incremental sync uses the local checked-out default branch as the source of truth. It must not auto-checkout another branch or auto-pull, because that would mutate the user's repo state.
-- For managed `git_url` sources under `<target_root>/sources/<project_name>`, the skill may fetch and fast-forward the managed checkout before analysis.
-- Non-`Git` projects always use full sync because there is no reliable diff baseline.
-- Large or ambiguous `Git` changes fall back to full sync rather than risking stale context.
-- Incremental review is Git-first: start from the default-branch diff/tree, then read only the affected modules unless a broad review trigger fires.
+### Expected output to user
+- **Scope**: add dark-mode toggle, persist preference, update UI tokens; out of scope: redesign whole design system.
+- **Implementation**: list touched files/modules and key logic changes.
+- **Verification**: lint/test/check status, CI gate result.
+- **Risks**: edge-case list (e.g., SSR hydration mismatch) and next actions.
 
-### Review Scope Meanings
+## Failure Scenario Example (Mandatory transparency)
+### Example failure
+- Context and OpenSpec succeeded.
+- Harness implementation completed.
+- Verification failed: one required test suite failed and CI gate is red.
 
-- `git-diff-only`: first inspect Git diff/tree, then spot-check only the modules and paths hit by the diff.
-- `broad-source-review`: widen back to the source tree because diff-only review is not safe enough for this run.
-- `noop`: no code changes were detected, so do not re-read source files.
+### Required user-facing response format
+- **Status**: failed (not ready to merge)
+- **What passed**: context build + scope definition + code implementation
+- **What failed**: exact failing checks/tests and impacted modules
+- **Risk**: what could break if force-merged
+- **Next action**: concrete fix plan and estimated smallest retry scope
 
-## Ownership Rules
+### Rule
+Do not claim completion when verification fails. Always return actionable failure details.
 
-- Manual content is user-owned. Put it outside managed `AUTO` blocks.
-- Generated content is sync-owned. `sync_context_project.py` rewrites only those `AUTO` blocks.
-- If a generated `AUTO` block is edited manually, that is treated as a conflict on the next sync.
-- Use `--force-generated` only when you intentionally want the sync to replace the current generated block.
+### Failure State Management
+- Keep work in an isolated branch/worktree until verification passes.
+- On failure, do not merge; provide a minimal retry plan.
+- Preserve reproducibility: include failing command, error signature, and impacted files.
 
-## Mandatory Review Standard
+## Non-Negotiable Constraints
+- Use brownfield-first strategy: preserve existing runtime/product structure.
+- Prefer incremental hardening over broad rewrites.
+- If context docs and OpenSpec artifacts conflict, resolve before implementation.
+- Do not hide failures: surface blockers explicitly.
 
-- Every generated or synced project context must receive a review pass before the task is considered complete.
-- A sync with code changes is not considered fully handed off until the recorded review outcome moves from `pending` to `pass`, `pass with findings`, or `fail`.
-- The default review path is **not** a broad source reread. Start from Git diff/tree and compare generated docs against the affected scope first.
-- Broader source review is reserved for these triggers:
-  - first build or missing sync state
-  - module map drift
-  - ambiguous entrypoints or runtime/build boundaries
-  - context vs diff mismatch
-  - non-Git repos
-- Prioritize finding misleading context over producing more text. Typical failure modes:
-  - config or package files misclassified as runtime entrypoints
-  - major functional areas missing from modules
-  - QA/release/storage/i18n concerns missing or under-modeled
-  - agent docs left as placeholders
-  - status files that no longer match the real project state
-- Review outcomes must be one of:
-  - `pass`: context is accurate enough to hand off
-  - `pass with findings`: mostly usable, but known issues are called out
-  - `fail`: generated context is materially misleading and needs fixes before handoff
-- If the user explicitly asks for a review, present findings first with concrete file and line references.
-
-## Detailed References
-
-Keep `SKILL.md` lean. Load these references only when needed:
-
-- `references/extraction-rules.md` — extraction guidance for entrypoints, flows, data, tests, and i18n
-- `references/structure-rules.md` — module and agent directory rules, including how agents map to modules
-- `references/output-templates.md` — required L1/L2/L3 document templates
-- `references/delivery-checklist.md` — final quality checklist and file inventory
+## Loading Model for Context Workspaces (L1/L2/L3)
+- **L1**: `projects/<project>/skill.md` — overview, routing, load order.
+- **L2**: `agents/` and `modules/<module>/README.md` — pick agent, then module overview.
+- **L3**: `modules/<module>/<module>.md`, `modules/<module>/<feature>.md`, `references/*` — deep evidence.
 
 ## Resources
 
-- `scripts/init_context_project.py` — scaffold generator (preferred).
-- `scripts/sync_context_project.py` — sync generator for Git incremental / non-Git full refresh.
-- `scripts/validate_harness_contract.py` — standalone harness-contract validator for existing generated agent docs.
+### scripts/
+- `init_context_project.py` — scaffold generator.
+- `sync_context_project.py` — sync generator (Git incremental / non-Git full refresh).
+- `validate_harness_contract.py` — harness-contract validator for generated agent docs.
+
+### references/
+- `extraction-rules.md` — code extraction guidance.
+- `structure-rules.md` — module/agent structure rules.
+- `output-templates.md` — output templates.
+- `delivery-checklist.md` — delivery checklist.
+- `openspec-integration.md` — OpenSpec integration notes.
